@@ -1,0 +1,3196 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>光纜路由繪製與管線敷設管理 GIS 系統</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Google Identity Services (GIS) 用於串接個人 Google 雲端硬碟 -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <!-- SheetJS (xlsx) 用於解析與匯出 Excel (.xlsx / .xls / .csv) 站點資料 -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+  <!-- Google Fonts: Inter & Noto Sans TC -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    html, body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      font-family: 'Inter', 'Noto Sans TC', sans-serif;
+      overflow: hidden;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #map {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      background-color: #e2e8f0;
+    }
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+    .cable-badge-tooltip {
+      background: rgba(255, 255, 255, 0.95);
+      border: 1.5px solid #334155;
+      border-radius: 6px;
+      padding: 2px 6px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #0f172a;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+      white-space: nowrap;
+      pointer-events: none;
+    }
+    .station-label-tooltip {
+      background: rgba(15, 23, 42, 0.88);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #f8fafc;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.25);
+    }
+    .crosshair-cursor {
+      cursor: crosshair !important;
+    }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 h-screen w-screen flex flex-col select-none">
+
+  <!-- 頂部導覽與繪製工具列 -->
+  <header class="bg-slate-900 text-white px-4 py-2.5 shadow-md z-30 shrink-0 flex flex-wrap items-center justify-between gap-2 border-b border-slate-700">
+    <div class="flex items-center gap-2.5">
+      <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center shadow-inner">
+        <i data-lucide="network" class="w-5 h-5 text-white"></i>
+      </div>
+      <div>
+        <h1 class="text-sm sm:text-base font-bold tracking-wide flex items-center gap-2">
+          光纜路由繪製與管線敷設管理 GIS 系統
+          <span class="hidden md:inline-block text-[11px] bg-slate-800 text-indigo-300 border border-indigo-500/40 px-2 py-0.5 rounded-full font-medium">12~192芯 / 四類管線敷設</span>
+        </h1>
+      </div>
+    </div>
+
+    <!-- 核心操作工具按鈕區 -->
+    <div class="flex flex-wrap items-center gap-1.5 sm:gap-2">
+      <button id="btn-mode-view" type="button" onclick="setMode('view')" class="mode-btn flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium bg-indigo-600 text-white shadow transition">
+        <i data-lucide="mouse-pointer" class="w-4 h-4"></i>
+        <span>選取檢視</span>
+      </button>
+
+      <button id="btn-mode-station" type="button" onclick="setMode('station')" class="mode-btn flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
+        <i data-lucide="map-pin-plus" class="w-4 h-4 text-amber-400"></i>
+        <span>新增站點</span>
+      </button>
+
+      <button type="button" onclick="openExcelStationModal()" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 transition" title="透過 Excel (.xlsx / .csv) 批次匯入站點或下載範本">
+        <i data-lucide="file-spreadsheet" class="w-4 h-4 text-amber-400"></i>
+        <span class="hidden sm:inline">Excel 匯入站點</span>
+      </button>
+
+      <button id="btn-mode-cable" type="button" onclick="setMode('cable')" class="mode-btn flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
+        <i data-lucide="pen-tool" class="w-4 h-4 text-emerald-400"></i>
+        <span>繪製光纜路由</span>
+      </button>
+
+      <div class="h-5 w-px bg-slate-700 mx-0.5 hidden sm:block"></div>
+
+      <button id="btn-toggle-labels" type="button" onclick="toggleLabels()" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 transition" title="切換顯示地圖上的光纜芯數標籤">
+        <i data-lucide="tag" class="w-3.5 h-3.5"></i>
+        <span class="hidden sm:inline">標籤: 開</span>
+      </button>
+
+      <button id="btn-toggle-basemap" type="button" onclick="toggleBasemap()" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition" title="切換 Google 街道 / Google 衛星混合 / 一般街道 / 深色底圖">
+        <i data-lucide="layers" class="w-3.5 h-3.5 text-sky-400"></i>
+        <span id="basemap-label" class="hidden sm:inline">Google 街道</span>
+      </button>
+
+      <button type="button" onclick="locateCurrentUser()" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 transition" title="定位目前手機/裝置所在位置">
+        <i data-lucide="locate-fixed" class="w-3.5 h-3.5"></i>
+        <span class="hidden lg:inline">我的位置</span>
+      </button>
+
+      <button id="btn-open-gdrive" type="button" onclick="openGDriveModal()" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-sky-600 hover:bg-sky-500 text-white shadow transition" title="連結個人 Google 雲端硬碟一鍵存檔與讀取">
+        <i data-lucide="cloud" class="w-3.5 h-3.5"></i>
+        <span id="gdrive-btn-text">Google 雲端</span>
+      </button>
+
+      <button type="button" onclick="triggerImportGeoJSON()" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition" title="匯入 GeoJSON 圖資檔案">
+        <i data-lucide="upload" class="w-3.5 h-3.5 text-emerald-400"></i>
+        <span class="hidden md:inline">匯入</span>
+      </button>
+      <input id="geojson-file-input" type="file" accept=".json,.geojson" onchange="handleImportGeoJSON(event)" class="hidden" />
+
+      <button type="button" onclick="exportGeoJSON()" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-emerald-700 hover:bg-emerald-600 text-white shadow transition" title="匯出完整光纜路由與管線屬性 GeoJSON">
+        <i data-lucide="download" class="w-3.5 h-3.5"></i>
+        <span class="hidden md:inline">匯出 GeoJSON</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- 主工作區 -->
+  <div class="relative flex-1 min-h-0 w-full overflow-hidden">
+    
+    <!-- 地圖容器 -->
+    <div id="map"></div>
+
+    <!-- 繪製光纜時的浮動設定條 (僅在繪製模式顯示) -->
+    <div id="draw-toolbar" class="hidden absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-white/95 backdrop-blur-md border-2 border-indigo-500 shadow-2xl rounded-2xl p-3 w-[95%] max-w-2xl">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 mb-2 border-b border-slate-200">
+        <div class="flex items-center gap-2">
+          <span class="flex h-2.5 w-2.5 relative">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-600"></span>
+          </span>
+          <span class="font-bold text-sm text-slate-800">光纜路由繪製中</span>
+          <span id="draw-live-distance" class="text-xs font-mono bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-semibold">0 m</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <button type="button" onclick="undoLastPoint()" class="px-2.5 py-1 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center gap-1">
+            <i data-lucide="undo-2" class="w-3.5 h-3.5"></i> 復原一點
+          </button>
+          <button type="button" onclick="finishDrawingCable()" class="px-3 py-1 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow flex items-center gap-1">
+            <i data-lucide="check" class="w-3.5 h-3.5"></i> 完成繪製
+          </button>
+          <button type="button" onclick="setMode('view')" class="px-2.5 py-1 text-xs font-medium bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg">
+            取消
+          </button>
+        </div>
+      </div>
+
+      <!-- 即時選擇敷設方式與芯數 -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+        <div>
+          <label class="block font-semibold text-slate-600 mb-1">1. 選擇管線敷設方式（即時變色）：</label>
+          <div class="grid grid-cols-4 gap-1.5" id="draw-install-selector">
+            <button type="button" data-type="side_ditch" onclick="selectDrawInstallType('side_ditch')" class="install-choice active-choice flex flex-col items-center justify-center p-1.5 rounded-lg border-2 border-purple-600 bg-purple-50 text-purple-900 font-bold">
+              <span class="w-4 h-1.5 rounded-full bg-[#9333ea] mb-1"></span>
+              <span>側溝</span>
+            </button>
+            <button type="button" data-type="sewer" onclick="selectDrawInstallType('sewer')" class="install-choice flex flex-col items-center justify-center p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-medium">
+              <span class="w-4 h-1.5 rounded-full bg-[#16a34a] mb-1"></span>
+              <span>下水道</span>
+            </button>
+            <button type="button" data-type="aerial" onclick="selectDrawInstallType('aerial')" class="install-choice flex flex-col items-center justify-center p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-medium">
+              <span class="w-4 h-1.5 rounded-full bg-[#0284c7] mb-1"></span>
+              <span>架空附掛</span>
+            </button>
+            <button type="button" data-type="conduit" onclick="selectDrawInstallType('conduit')" class="install-choice flex flex-col items-center justify-center p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-medium">
+              <span class="w-4 h-1.5 rounded-full bg-[#111827] mb-1"></span>
+              <span>管道</span>
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-slate-600 mb-1">2. 選擇光纜芯數規格：</label>
+          <div class="grid grid-cols-5 gap-1.5" id="draw-cores-selector">
+            <button type="button" data-cores="12" onclick="selectDrawCores(12)" class="core-choice py-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 font-semibold text-slate-700">12芯</button>
+            <button type="button" data-cores="24" onclick="selectDrawCores(24)" class="core-choice py-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 font-semibold text-slate-700">24芯</button>
+            <button type="button" data-cores="48" onclick="selectDrawCores(48)" class="core-choice py-2 rounded-lg border-2 border-indigo-600 bg-indigo-50 font-bold text-indigo-800">48芯</button>
+            <button type="button" data-cores="96" onclick="selectDrawCores(96)" class="core-choice py-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 font-semibold text-slate-700">96芯</button>
+            <button type="button" data-cores="192" onclick="selectDrawCores(192)" class="core-choice py-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 font-semibold text-slate-700">192芯</button>
+          </div>
+        </div>
+      </div>
+      <div class="mt-2 pt-1.5 border-t border-slate-100 text-[11px] text-slate-500 flex items-center justify-between">
+        <span>點擊地圖連續繪製轉折點（靠近站點自動綠色吸附），雙擊或按「完成繪製」結束。</span>
+      </div>
+    </div>
+
+    <!-- 新增站點提示橫幅 -->
+    <div id="station-hint-banner" class="hidden absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-amber-500 text-slate-950 font-bold text-xs sm:text-sm px-4 py-2 rounded-full shadow-xl flex items-center gap-2">
+      <i data-lucide="map-pin" class="w-4 h-4"></i>
+      <span>請在地圖上點擊欲設置「機房 / 人孔 / 手孔 / 光交箱」的位置</span>
+    </div>
+
+    <!-- 左側懸浮面板：光纜迴路查詢、敷設方式圖例與統計 -->
+    <aside id="left-legend-panel" class="absolute bottom-2 left-2 right-2 sm:right-auto sm:bottom-auto sm:top-3 sm:left-3 z-20 bg-white/95 backdrop-blur-md border border-slate-200 shadow-xl rounded-2xl sm:w-80 transition-all overflow-hidden">
+      <div class="px-3.5 py-2.5 bg-slate-800 text-white flex items-center justify-between cursor-pointer" onclick="toggleLeftPanel()">
+        <div class="flex items-center gap-2">
+          <i data-lucide="search" class="w-4 h-4 text-indigo-400"></i>
+          <span class="text-xs sm:text-sm font-bold">光纜迴路查詢與管線篩選</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="sm:hidden text-[10px] text-slate-300 bg-slate-700 px-2 py-0.5 rounded-full">點此展開/收合</span>
+          <i id="left-panel-chevron" data-lucide="chevron-down" class="w-4 h-4 text-slate-300"></i>
+        </div>
+      </div>
+
+      <div id="left-panel-body" class="p-3.5 space-y-3.5 max-h-[52vh] sm:max-h-[75vh] overflow-y-auto">
+        <!-- 光纜迴路搜尋與獨立顯示隔離區 -->
+        <div class="bg-indigo-50/70 border border-indigo-200 rounded-xl p-2.5 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-indigo-950 flex items-center gap-1">
+              <i data-lucide="route" class="w-3.5 h-3.5 text-indigo-600"></i>
+              搜尋光纜迴路
+            </span>
+            <button id="btn-clear-circuit-isolate" type="button" onclick="clearCircuitSearchAndIsolate()" class="hidden text-[11px] font-bold text-rose-600 hover:underline">
+              顯示全部迴路
+            </button>
+          </div>
+          <div class="relative">
+            <input id="circuit-search-input" type="text" oninput="onCircuitSearchInput()" placeholder="輸入迴路名稱 / 代號 / 站點..." class="w-full pl-2.5 pr-7 py-1.5 bg-white border border-indigo-300 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:border-indigo-600" />
+            <button id="btn-clear-search-text" type="button" onclick="clearCircuitSearchInput()" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+              <i data-lucide="x-circle" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+
+          <label class="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-lg border border-indigo-200 cursor-pointer">
+            <span class="text-[11px] font-bold text-slate-700">只顯示此查詢迴路路由及資訊</span>
+            <input id="chk-isolate-circuit" type="checkbox" onchange="toggleIsolateCircuitMode()" class="rounded accent-indigo-600 w-3.5 h-3.5" />
+          </label>
+
+          <div id="circuit-search-results" class="max-h-32 overflow-y-auto space-y-1 pt-0.5"></div>
+        </div>
+
+        <hr class="border-slate-200" />
+
+        <!-- 四種敷設方式圖例與勾選篩選 -->
+        <div>
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="text-xs font-bold text-slate-700">管線敷設方式（點擊勾選顯示）</span>
+            <button type="button" onclick="resetFilters()" class="text-[11px] text-indigo-600 hover:underline font-medium">全部顯示</button>
+          </div>
+          <div class="space-y-1.5" id="legend-install-list"></div>
+        </div>
+
+        <hr class="border-slate-200" />
+
+        <!-- 光纜芯數規格篩選 -->
+        <div>
+          <span class="block text-xs font-bold text-slate-700 mb-1.5">光纜芯數篩選</span>
+          <div class="flex flex-wrap gap-1.5" id="filter-cores-list">
+            <button type="button" onclick="toggleCoreFilter('ALL')" data-core-filter="ALL" class="core-filter-btn px-2.5 py-1 rounded-md text-xs font-bold bg-slate-800 text-white">全部</button>
+            <button type="button" onclick="toggleCoreFilter(12)" data-core-filter="12" class="core-filter-btn px-2.5 py-1 rounded-md text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700">12芯</button>
+            <button type="button" onclick="toggleCoreFilter(24)" data-core-filter="24" class="core-filter-btn px-2.5 py-1 rounded-md text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700">24芯</button>
+            <button type="button" onclick="toggleCoreFilter(48)" data-core-filter="48" class="core-filter-btn px-2.5 py-1 rounded-md text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700">48芯</button>
+            <button type="button" onclick="toggleCoreFilter(96)" data-core-filter="96" class="core-filter-btn px-2.5 py-1 rounded-md text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700">96芯</button>
+            <button type="button" onclick="toggleCoreFilter(192)" data-core-filter="192" class="core-filter-btn px-2.5 py-1 rounded-md text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700">192芯</button>
+          </div>
+        </div>
+
+        <hr class="border-slate-200" />
+
+        <!-- 總體統計摘要 -->
+        <div class="bg-slate-50 rounded-xl p-2.5 border border-slate-200/80 grid grid-cols-3 gap-2 text-center">
+          <div>
+            <div class="text-[11px] text-slate-500">總光纜段</div>
+            <div id="stat-total-cables" class="text-sm font-bold text-slate-800">0 迴路</div>
+          </div>
+          <div>
+            <div class="text-[11px] text-slate-500">總路由長度</div>
+            <div id="stat-total-length" class="text-sm font-bold text-indigo-600">0 m</div>
+          </div>
+          <div>
+            <div class="text-[11px] text-slate-500">站點設施</div>
+            <div id="stat-total-stations" class="text-sm font-bold text-amber-600">0 處</div>
+          </div>
+        </div>
+
+        <!-- 站點圖例說明與點擊管理提示 -->
+        <div class="pt-1 space-y-1.5">
+          <div class="flex items-center justify-around text-[11px] text-slate-600 font-bold bg-slate-100/80 py-1.5 px-2 rounded-lg">
+            <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm bg-slate-900 border border-white shadow-2xs inline-block"></span>機房</span>
+            <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-purple-600 border border-white shadow-2xs inline-block"></span>基站</span>
+            <span class="flex items-center gap-1.5"><span class="w-3 h-3 rotate-45 bg-amber-500 border border-white shadow-2xs inline-block"></span>客戶</span>
+          </div>
+          <div class="text-[11px] text-amber-700 bg-amber-50 border border-amber-200/80 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5 font-medium">
+            <i data-lucide="info" class="w-3.5 h-3.5 shrink-0 text-amber-600"></i>
+            <span>點擊地圖上任一站點，可編輯站內設備、地址或刪除站點</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 右側滑出面板：光纜詳細資料、敷設方式修改與連續芯號設備 Port 管理 -->
+    <aside id="right-detail-panel" class="hidden absolute top-0 right-0 h-full w-full sm:w-[420px] bg-white shadow-2xl border-l border-slate-200 z-30 flex flex-col">
+      <div class="px-4 py-3 bg-slate-900 text-white flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span id="detail-install-dot" class="w-3.5 h-3.5 rounded-full border-2 border-white"></span>
+          <h2 id="detail-cable-name" class="font-bold text-base">CB-01</h2>
+          <span id="detail-cores-badge" class="text-xs bg-indigo-600 px-2 py-0.5 rounded-full font-bold">48 芯</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <button type="button" onclick="deleteSelectedCable()" class="p-1.5 rounded-lg hover:bg-rose-600/80 text-rose-300 hover:text-white transition" title="刪除此光纜">
+            <i data-lucide="trash-2" class="w-4 h-4"></i>
+          </button>
+          <button type="button" onclick="closeRightPanel()" class="p-1.5 rounded-lg hover:bg-slate-700 text-slate-300 hover:text-white transition" title="關閉面板">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="p-4 bg-slate-50 border-b border-slate-200 space-y-3 text-xs">
+        <div class="grid grid-cols-2 gap-2.5">
+          <div>
+            <label class="block text-slate-500 font-semibold mb-1">光纜迴路名稱</label>
+            <input id="edit-cable-name" type="text" onchange="updateCableMetadata()" class="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 focus:outline-none focus:border-indigo-500" />
+          </div>
+          <div>
+            <label class="block text-slate-500 font-semibold mb-1">實際路由長度</label>
+            <div id="detail-cable-length" class="w-full px-2.5 py-1.5 bg-slate-200/70 border border-slate-300 rounded-lg font-mono font-bold text-slate-700">0 m</div>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between bg-indigo-50/80 px-3 py-2 rounded-lg border border-indigo-200">
+          <span class="font-bold text-indigo-900">獨立檢視此迴路路由與資訊</span>
+          <button id="btn-panel-isolate-toggle" type="button" onclick="toggleIsolateFromDetailPanel()" class="px-2.5 py-1 rounded-md text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition">
+            僅顯示此迴路
+          </button>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2.5">
+          <div>
+            <label class="block text-slate-500 font-semibold mb-1">管線敷設方式（顏色同步）</label>
+            <select id="edit-cable-install" onchange="updateCableMetadata()" class="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 focus:outline-none focus:border-indigo-500">
+              <option value="side_ditch">🟣 側溝（紫色）</option>
+              <option value="sewer">🟢 下水道（綠色）</option>
+              <option value="aerial">🔵 架空附掛（水藍色）</option>
+              <option value="conduit">⚫ 管道（黑色）</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-slate-500 font-semibold mb-1">光纜總芯數規格</label>
+            <select id="edit-cable-cores" onchange="updateCableCoresCount()" class="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 focus:outline-none focus:border-indigo-500">
+              <option value="12">12 芯（第 1 ~ 12 芯）</option>
+              <option value="24">24 芯（第 1 ~ 24 芯）</option>
+              <option value="48">48 芯（第 1 ~ 48 芯）</option>
+              <option value="96">96 芯（第 1 ~ 96 芯）</option>
+              <option value="192">192 芯（第 1 ~ 192 芯）</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between bg-white px-3 py-2 rounded-lg border border-slate-200">
+          <div class="truncate">
+            <span class="text-slate-400">起訖站點：</span>
+            <span id="detail-stations-span" class="font-bold text-slate-700">起點 ➔ 終點</span>
+          </div>
+          <span id="detail-usage-summary" class="font-bold text-indigo-600 shrink-0 ml-2">已使用 0 / 48 芯</span>
+        </div>
+      </div>
+
+      <div class="px-4 py-2.5 bg-white border-b border-slate-200 space-y-2">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-1" id="core-status-filter-group">
+            <button type="button" data-status-filter="ALL" onclick="setCoreStatusFilter('ALL')" class="core-status-filter-btn px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-800 text-white">全部芯數</button>
+            <button type="button" data-status-filter="used" onclick="setCoreStatusFilter('used')" class="core-status-filter-btn px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700">已使用</button>
+            <button type="button" data-status-filter="available" onclick="setCoreStatusFilter('available')" class="core-status-filter-btn px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700">空閒</button>
+          </div>
+          <div class="relative w-28">
+            <input id="core-jump-input" type="number" min="1" max="192" oninput="filterCoreListBySearch()" placeholder="搜尋芯號..." class="w-full pl-2.5 pr-2 py-1 text-xs border border-slate-300 rounded-lg font-medium focus:outline-none focus:border-indigo-500" />
+          </div>
+        </div>
+        <div class="flex items-center justify-between text-[11px] text-slate-400">
+          <span>連續編號：第 1 芯 ～ 第 N 芯</span>
+          <span>點擊任一芯設定甲乙兩端設備與 PORT 位</span>
+        </div>
+      </div>
+
+      <div id="core-list-container" class="flex-1 overflow-y-auto p-3 space-y-1.5 bg-slate-50/50"></div>
+    </aside>
+
+  </div>
+
+  <!-- 彈窗 1：完成繪製光纜確認視窗 -->
+  <div id="modal-new-cable" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
+      <div class="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between">
+        <h3 class="font-bold text-base flex items-center gap-2">
+          <i data-lucide="cable" class="w-5 h-5 text-indigo-400"></i>
+          確認新建光纜路由屬性
+        </h3>
+        <button type="button" onclick="cancelNewCableModal()" class="text-slate-400 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <div class="p-5 space-y-4 text-sm">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-bold text-slate-600 mb-1">光纜迴路名稱 *</label>
+            <input id="modal-cable-name" type="text" class="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-none focus:border-indigo-500" placeholder="例如：CB-05 中和骨幹迴路" />
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-600 mb-1">測量路由長度</label>
+            <input id="modal-cable-length" type="text" readonly class="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl font-mono font-bold text-slate-600" />
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-slate-600 mb-1.5">管線敷設方式（地圖顏色區分）*</label>
+          <div class="grid grid-cols-2 gap-2" id="modal-install-grid">
+            <label class="cursor-pointer flex items-center gap-2.5 p-2.5 rounded-xl border-2 border-slate-200 hover:bg-slate-50 transition">
+              <input type="radio" name="modal-install" value="side_ditch" class="accent-purple-600" checked />
+              <span class="w-4 h-4 rounded-full bg-[#9333ea] shrink-0"></span>
+              <span class="font-bold text-slate-800">側溝（紫色）</span>
+            </label>
+            <label class="cursor-pointer flex items-center gap-2.5 p-2.5 rounded-xl border-2 border-slate-200 hover:bg-slate-50 transition">
+              <input type="radio" name="modal-install" value="sewer" class="accent-emerald-600" />
+              <span class="w-4 h-4 rounded-full bg-[#16a34a] shrink-0"></span>
+              <span class="font-bold text-slate-800">下水道（綠色）</span>
+            </label>
+            <label class="cursor-pointer flex items-center gap-2.5 p-2.5 rounded-xl border-2 border-slate-200 hover:bg-slate-50 transition">
+              <input type="radio" name="modal-install" value="aerial" class="accent-sky-600" />
+              <span class="w-4 h-4 rounded-full bg-[#0284c7] shrink-0"></span>
+              <span class="font-bold text-slate-800">架空附掛（水藍）</span>
+            </label>
+            <label class="cursor-pointer flex items-center gap-2.5 p-2.5 rounded-xl border-2 border-slate-200 hover:bg-slate-50 transition">
+              <input type="radio" name="modal-install" value="conduit" class="accent-slate-900" />
+              <span class="w-4 h-4 rounded-full bg-[#111827] shrink-0"></span>
+              <span class="font-bold text-slate-800">管道（黑色）</span>
+            </label>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-slate-600 mb-1">光纜芯數規格 *</label>
+          <select id="modal-cable-cores" class="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-none focus:border-indigo-500">
+            <option value="12">12 芯（第 1 ~ 12 芯）</option>
+            <option value="24">24 芯（第 1 ~ 24 芯）</option>
+            <option value="48" selected>48 芯（第 1 ~ 48 芯）</option>
+            <option value="96">96 芯（第 1 ~ 96 芯）</option>
+            <option value="192">192 芯（第 1 ~ 192 芯）</option>
+          </select>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-bold text-slate-600 mb-1">起點站點</label>
+            <input id="modal-start-station" type="text" class="w-full px-3 py-2 border border-slate-300 rounded-xl font-medium text-slate-800" placeholder="起點名稱" />
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-600 mb-1">終點站點</label>
+            <input id="modal-end-station" type="text" class="w-full px-3 py-2 border border-slate-300 rounded-xl font-medium text-slate-800" placeholder="終點名稱" />
+          </div>
+        </div>
+      </div>
+      <div class="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
+        <button type="button" onclick="cancelNewCableModal()" class="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-xl">取消</button>
+        <button type="button" onclick="confirmSaveNewCable()" class="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow">建立光纜</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 彈窗 2：新增站點視窗 -->
+  <div id="modal-new-station" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-sm w-full overflow-hidden border border-slate-200">
+      <div class="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between">
+        <h3 class="font-bold text-sm flex items-center gap-2">
+          <i data-lucide="map-pin" class="w-4 h-4 text-amber-400"></i>
+          新增站點設施
+        </h3>
+        <button type="button" onclick="closeStationModal()" class="text-slate-400 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <div class="p-4 space-y-3 text-xs">
+        <div>
+          <label class="block font-bold text-slate-700 mb-1">站點名稱 *</label>
+          <input id="station-name-input" type="text" class="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-none focus:border-indigo-500" placeholder="例如：土城基地台 #01 或 遠東科技客戶端" />
+        </div>
+        <div>
+          <label class="block font-bold text-slate-700 mb-1">站點分類 *</label>
+          <select id="station-type-input" class="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-none focus:border-indigo-500">
+            <option value="co">機房 (Central Office)</option>
+            <option value="base_station" selected>基站 (Base Station)</option>
+            <option value="customer">客戶 (Customer)</option>
+          </select>
+        </div>
+        <div>
+          <label class="block font-bold text-slate-700 mb-1">站點地址（選填）</label>
+          <input id="station-address-input" type="text" class="w-full px-3 py-2 border border-slate-300 rounded-xl font-medium text-slate-800 focus:outline-none focus:border-indigo-500" placeholder="例如：新北市土城區中央路二段100號" />
+        </div>
+        <div>
+          <label class="block font-bold text-slate-700 mb-1">站內初始設備（選填，多台可用逗號分隔）</label>
+          <input id="station-init-devices-input" type="text" class="w-full px-3 py-2 border border-slate-300 rounded-xl font-medium text-slate-800 focus:outline-none focus:border-indigo-500" placeholder="例如：BBU-01, ODF-01" />
+        </div>
+        <div id="station-coord-preview" class="text-[11px] font-mono text-slate-500 bg-slate-100 px-3 py-1.5 rounded-lg"></div>
+      </div>
+      <div class="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
+        <button type="button" onclick="closeStationModal()" class="px-3.5 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-xl">取消</button>
+        <button type="button" onclick="confirmSaveStation()" class="px-4 py-2 text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white rounded-xl shadow">儲存站點</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 彈窗 2B：點選站點編輯站內設備與刪除站點視窗 -->
+  <div id="modal-edit-station" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
+      <div class="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between">
+        <h3 class="font-bold text-sm sm:text-base flex items-center gap-2">
+          <i data-lucide="server" class="w-4 h-4 text-amber-400"></i>
+          <span id="edit-station-modal-title">站點資訊與站內設備管理</span>
+        </h3>
+        <button type="button" onclick="closeEditStationModal()" class="text-slate-400 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <div class="p-4 space-y-3.5 text-xs max-h-[82vh] overflow-y-auto">
+        <!-- 站點基本資料 -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 bg-slate-50 p-3 rounded-xl border border-slate-200">
+          <div>
+            <label class="block font-bold text-slate-600 mb-1">站點名稱 *</label>
+            <input id="edit-station-name" type="text" class="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 focus:outline-none focus:border-indigo-500" />
+          </div>
+          <div>
+            <label class="block font-bold text-slate-600 mb-1">站點分類</label>
+            <select id="edit-station-type" class="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 focus:outline-none focus:border-indigo-500">
+              <option value="co">機房 (Central Office)</option>
+              <option value="base_station">基站 (Base Station)</option>
+              <option value="customer">客戶 (Customer)</option>
+            </select>
+          </div>
+          <div class="sm:col-span-2">
+            <label class="block font-bold text-slate-600 mb-1">站點地址</label>
+            <input id="edit-station-address" type="text" placeholder="輸入地址資訊..." class="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-medium text-slate-800 focus:outline-none focus:border-indigo-500" />
+          </div>
+          <div id="edit-station-coords" class="sm:col-span-2 text-[11px] font-mono text-slate-500 flex items-center justify-between">
+            <span>座標：--</span>
+            <span id="edit-station-cables-count" class="text-indigo-600 font-sans font-bold">關聯光纜：0 條</span>
+          </div>
+        </div>
+
+        <!-- 站內設備清單區 -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="font-bold text-slate-800 flex items-center gap-1.5">
+              <i data-lucide="cpu" class="w-3.5 h-3.5 text-indigo-600"></i>
+              站內設備清單（點擊可修改或刪除）
+            </span>
+            <span id="station-device-count-badge" class="text-[11px] bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full font-bold">0 台設備</span>
+          </div>
+
+          <div class="flex flex-col sm:flex-row gap-1.5 bg-indigo-50/70 p-2.5 rounded-xl border border-indigo-200">
+            <input id="new-dev-name" type="text" placeholder="設備編號（如 OLT-01 / ODF-01）" class="flex-1 px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 focus:outline-none focus:border-indigo-500" />
+            <input id="new-dev-model" type="text" placeholder="型號/規格/備註（選填）" class="flex-1 px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-700 focus:outline-none focus:border-indigo-500" />
+            <button type="button" onclick="addDeviceToCurrentStation()" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold shrink-0 flex items-center justify-center gap-1">
+              <i data-lucide="plus" class="w-3.5 h-3.5"></i> 新增設備
+            </button>
+          </div>
+
+          <div id="station-devices-list" class="space-y-2.5 max-h-72 overflow-y-auto pr-0.5"></div>
+        </div>
+      </div>
+      <div class="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2">
+        <button id="btn-delete-station" type="button" onclick="deleteCurrentStation()" class="px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-1">
+          <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> 刪除此站點
+        </button>
+        <div class="flex items-center gap-2">
+          <button type="button" onclick="closeEditStationModal()" class="px-3.5 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-xl">取消</button>
+          <button type="button" onclick="saveEditStationModal()" class="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow">儲存站點設定</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 彈窗 2C：Excel 批次匯入站點視窗（支援地址自動定位與 Google 雲端硬碟讀取） -->
+  <div id="modal-excel-stations" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
+      <div class="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between">
+        <h3 class="font-bold text-sm sm:text-base flex items-center gap-2">
+          <i data-lucide="file-spreadsheet" class="w-5 h-5 text-amber-400"></i>
+          Excel 批次匯入站點（支援地址自動定位 & 雲端讀取）
+        </h3>
+        <button type="button" onclick="closeExcelStationModal()" class="text-slate-400 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <div class="p-5 space-y-3.5 text-xs max-h-[82vh] overflow-y-auto">
+        <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2 text-slate-700">
+          <div class="font-bold text-amber-900 flex items-center justify-between">
+            <span>Excel 欄位格式說明（支援 .xlsx / .xls / .csv）</span>
+            <button type="button" onclick="downloadStationExcelTemplate()" class="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-bold shadow-2xs flex items-center gap-1">
+              <i data-lucide="download" class="w-3.5 h-3.5"></i> 下載 Excel 範本
+            </button>
+          </div>
+          <p class="text-[11px] leading-relaxed">
+            Excel 欄位包含：<strong>站點名稱</strong>、<strong>站點分類</strong>（請填：<span class="text-indigo-700 font-bold">基站</span>、<span class="text-amber-700 font-bold">客戶</span>、<span class="text-slate-900 font-bold">機房</span>）、<strong>站點地址</strong>（填入地址即可自動轉換經緯度在地圖建立站點；若有填<strong>緯度/經度</strong>則優先使用座標）、<strong>站內設備</strong>（選填，多台用逗號分隔）。
+          </p>
+        </div>
+
+        <!-- 匯入進度提示列 -->
+        <div id="excel-geocode-progress" class="hidden bg-indigo-50 border border-indigo-200 rounded-xl p-3 space-y-1.5">
+          <div class="flex items-center justify-between font-bold text-indigo-900">
+            <span id="excel-geocode-status-text">正在解析站點地址並轉換地圖座標...</span>
+            <span id="excel-geocode-counter" class="font-mono">0 / 0</span>
+          </div>
+          <div class="w-full bg-indigo-200 rounded-full h-2 overflow-hidden">
+            <div id="excel-geocode-bar" class="bg-indigo-600 h-2 rounded-full transition-all" style="width: 0%"></div>
+          </div>
+        </div>
+
+        <!-- 來源一：從個人 Google 雲端硬碟直接讀取 Excel / Google 試算表 -->
+        <div class="border border-sky-200 bg-sky-50/60 rounded-2xl p-3.5 space-y-2.5">
+          <div class="flex items-center justify-between">
+            <span class="font-bold text-sky-950 flex items-center gap-1.5">
+              <i data-lucide="cloud" class="w-4 h-4 text-sky-600"></i>
+              從個人 Google 雲端硬碟直接匯入 Excel / 試算表
+            </span>
+            <button type="button" onclick="listGoogleDriveExcelFiles()" class="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-lg font-bold shadow-2xs flex items-center gap-1">
+              <i data-lucide="folder-search" class="w-3.5 h-3.5"></i> 讀取雲端 Excel 清單
+            </button>
+          </div>
+          <div id="gdrive-excel-file-list" class="space-y-1.5 max-h-36 overflow-y-auto">
+            <div class="text-[11px] text-slate-500">點擊右上方「讀取雲端 Excel 清單」，即可列出您雲端硬碟中的 Excel 檔案與 Google 試算表並一鍵匯入。</div>
+          </div>
+        </div>
+
+        <!-- 來源二：從本機電腦/手機選擇 Excel 檔案 -->
+        <div class="border-2 border-dashed border-slate-300 hover:border-indigo-500 rounded-2xl p-5 text-center bg-slate-50 transition cursor-pointer" onclick="document.getElementById('excel-station-file-input').click()">
+          <i data-lucide="upload-cloud" class="w-7 h-7 text-indigo-500 mx-auto mb-1.5"></i>
+          <div class="font-bold text-sm text-slate-800">或從本機裝置選擇 Excel 檔案匯入</div>
+          <div class="text-[11px] text-slate-500 mt-0.5">支援 .xlsx、.xls 與 .csv 格式（自動地址轉座標）</div>
+          <input id="excel-station-file-input" type="file" accept=".xlsx,.xls,.csv" onchange="handleStationExcelFile(event)" class="hidden" />
+        </div>
+
+        <div class="flex items-center justify-between bg-slate-100 px-3 py-2 rounded-xl">
+          <span class="font-bold text-slate-700">匯入模式：</span>
+          <div class="flex items-center gap-3">
+            <label class="flex items-center gap-1 cursor-pointer font-medium">
+              <input type="radio" name="excel-import-mode" value="merge" checked class="accent-indigo-600" />
+              <span>新增 / 合併現有站點</span>
+            </label>
+            <label class="flex items-center gap-1 cursor-pointer font-medium">
+              <input type="radio" name="excel-import-mode" value="replace" class="accent-rose-600" />
+              <span>覆蓋全部站點</span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-end">
+        <button type="button" onclick="closeExcelStationModal()" class="px-4 py-1.5 text-xs font-bold bg-slate-800 text-white rounded-xl">關閉</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 彈窗 3：單芯光纖甲乙兩端設備與 PORT 位編輯視窗 -->
+  <div id="modal-edit-core" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
+      <div class="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between">
+        <h3 class="font-bold text-sm flex items-center gap-2" id="edit-core-title">
+          編輯第 1 芯（甲乙兩端連結設定）
+        </h3>
+        <button type="button" onclick="closeCoreModal()" class="text-slate-400 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <div class="p-4 space-y-3 text-xs max-h-[80vh] overflow-y-auto">
+        <!-- 甲端 (A端) 設定區塊 -->
+        <div class="p-3 rounded-xl bg-indigo-50/70 border border-indigo-200 space-y-2.5">
+          <div class="flex items-center justify-between">
+            <span class="font-bold text-indigo-900 flex items-center gap-1.5">
+              <span class="px-1.5 py-0.5 bg-indigo-600 text-white rounded text-[11px]">甲端</span>
+              <span id="core-modal-station-a" class="text-slate-600 font-semibold">起點站點</span>
+            </span>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">甲端設備編號</label>
+              <input id="core-device-a-input" type="text" class="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 focus:outline-none focus:border-indigo-500" placeholder="請輸入甲端設備編號" />
+            </div>
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">甲端 PORT 位 *</label>
+              <input id="core-port-a-input" type="text" class="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 focus:outline-none focus:border-indigo-500" placeholder="如：1/1/1" />
+              <div class="flex flex-wrap gap-1 mt-1.5">
+                <button type="button" onclick="fillQuickPort('a', '1/1/1')" class="px-1.5 py-0.5 bg-white hover:bg-indigo-100 text-slate-600 border border-slate-200 rounded font-mono text-[10px]">1/1/1</button>
+                <button type="button" onclick="fillQuickPort('a', '1/1/2')" class="px-1.5 py-0.5 bg-white hover:bg-indigo-100 text-slate-600 border border-slate-200 rounded font-mono text-[10px]">1/1/2</button>
+                <button type="button" onclick="fillQuickPort('a', 'GE-0/1')" class="px-1.5 py-0.5 bg-white hover:bg-indigo-100 text-slate-600 border border-slate-200 rounded font-mono text-[10px]">GE-0/1</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 雙端對應連結方向指示 -->
+        <div class="flex items-center justify-center gap-2 text-slate-400 py-0.5">
+          <div class="h-px bg-slate-200 flex-1"></div>
+          <span class="text-[11px] font-bold text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-200 flex items-center gap-1">
+            <i data-lucide="arrow-left-right" class="w-3 h-3"></i> 雙端光纖跳接對應
+          </span>
+          <div class="h-px bg-slate-200 flex-1"></div>
+        </div>
+
+        <!-- 乙端 (Z端) 設定區塊 -->
+        <div class="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-2.5">
+          <div class="flex items-center justify-between">
+            <span class="font-bold text-emerald-900 flex items-center gap-1.5">
+              <span class="px-1.5 py-0.5 bg-emerald-600 text-white rounded text-[11px]">乙端</span>
+              <span id="core-modal-station-z" class="text-slate-600 font-semibold">終點站點</span>
+            </span>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">乙端設備編號</label>
+              <input id="core-device-z-input" type="text" class="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 focus:outline-none focus:border-emerald-500" placeholder="請輸入乙端設備編號" />
+            </div>
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">乙端 PORT 位 *</label>
+              <input id="core-port-z-input" type="text" class="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 focus:outline-none focus:border-emerald-500" placeholder="如：PON-01" />
+              <div class="flex flex-wrap gap-1 mt-1.5">
+                <button type="button" onclick="fillQuickPort('z', '1/1/1')" class="px-1.5 py-0.5 bg-white hover:bg-emerald-100 text-slate-600 border border-slate-200 rounded font-mono text-[10px]">1/1/1</button>
+                <button type="button" onclick="fillQuickPort('z', 'GE-0/1')" class="px-1.5 py-0.5 bg-white hover:bg-emerald-100 text-slate-600 border border-slate-200 rounded font-mono text-[10px]">GE-0/1</button>
+                <button type="button" onclick="fillQuickPort('z', 'PON-01')" class="px-1.5 py-0.5 bg-white hover:bg-emerald-100 text-slate-600 border border-slate-200 rounded font-mono text-[10px]">PON-01</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2">
+        <button type="button" onclick="releaseCoreEdit()" class="px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-xl">釋放此芯 (設為空閒)</button>
+        <div class="flex items-center gap-2">
+          <button type="button" onclick="closeCoreModal()" class="px-3.5 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-xl">取消</button>
+          <button type="button" onclick="saveCoreEdit()" class="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow">儲存甲乙兩端</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 彈窗 4：個人 Google 雲端硬碟 (Google Drive API) 一鍵存檔 / 讀取設定 -->
+  <div id="modal-gdrive" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
+      <div class="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between">
+        <h3 class="font-bold text-sm sm:text-base flex items-center gap-2">
+          <i data-lucide="cloud" class="w-5 h-5 text-sky-400"></i>
+          個人 Google 雲端硬碟（Google Drive）同步
+        </h3>
+        <button type="button" onclick="closeGDriveModal()" class="text-slate-400 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <div class="p-5 space-y-4 text-xs max-h-[82vh] overflow-y-auto">
+        <div id="gdrive-status-banner" class="p-3 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <span id="gdrive-status-dot" class="w-2.5 h-2.5 rounded-full bg-slate-400"></span>
+            <span id="gdrive-status-text" class="font-bold text-slate-700">尚未登入 Google 雲端硬碟</span>
+          </div>
+          <span id="gdrive-last-sync" class="text-[11px] text-slate-500 font-mono">本機自動暫存中</span>
+        </div>
+
+        <div class="space-y-1.5">
+          <label class="block font-bold text-slate-700">1. 輸入您的 Google OAuth Client ID：</label>
+          <input id="gdrive-client-id-input" type="text" onchange="saveGDriveClientId()" placeholder="貼上如：1234567890-xxxx.apps.googleusercontent.com" class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl font-mono text-xs text-slate-800 focus:outline-none focus:border-sky-500" />
+          <p class="text-[11px] text-slate-500">系統僅申請 <code class="bg-slate-100 px-1 rounded">drive.file</code> 最小權限，只會存取本系統在您雲端建立的 <code class="bg-slate-100 px-1 rounded">fiber_routes_cloud_db.json</code> 檔案，無法讀取您雲端內其他資料。</p>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+          <button type="button" onclick="connectGoogleDrive()" class="px-3 py-2.5 rounded-xl font-bold bg-sky-600 hover:bg-sky-700 text-white shadow flex items-center justify-center gap-1.5">
+            <i data-lucide="log-in" class="w-4 h-4"></i> 登入授權 Google
+          </button>
+          <button type="button" onclick="saveToGoogleDrive()" class="px-3 py-2.5 rounded-xl font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow flex items-center justify-center gap-1.5">
+            <i data-lucide="cloud-upload" class="w-4 h-4"></i> 一鍵雲端存檔
+          </button>
+          <button type="button" onclick="loadFromGoogleDrive()" class="px-3 py-2.5 rounded-xl font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow flex items-center justify-center gap-1.5">
+            <i data-lucide="cloud-download" class="w-4 h-4"></i> 從雲端讀取
+          </button>
+        </div>
+
+        <hr class="border-slate-200" />
+
+        <div class="bg-amber-50/80 border border-amber-200 rounded-xl p-3 space-y-1.5 text-[11px] text-slate-700">
+          <div class="font-bold text-amber-900 flex items-center gap-1.5">
+            <i data-lucide="help-circle" class="w-4 h-4 text-amber-600"></i>
+            如何免費取得 Google Client ID？（只需設定一次）
+          </div>
+          <ol class="list-decimal pl-4 space-y-1">
+            <li>前往 <strong>Google Cloud Console</strong> 建立新專案，搜尋並啟用 <strong>Google Drive API</strong>。</li>
+            <li>左側選單點選「<strong>OAuth 同意畫面</strong>」➔ 選「外部 (External)」➔ 填入應用程式名稱並將您自己的 Gmail 加入「<strong>測試使用者</strong>」。</li>
+            <li>左側選單點選「<strong>憑證</strong>」➔「建立憑證」➔「<strong>OAuth 用戶端 ID</strong>」➔ 類型選「<strong>網頁應用程式</strong>」。</li>
+            <li>在「<strong>已授權的 JavaScript 來源</strong>」新增您放置此網頁的網址（例如 <code class="bg-white px-1 rounded border">https://您的帳號.github.io</code> 或 <code class="bg-white px-1 rounded border">http://localhost:8080</code>），建立後複製 Client ID 貼到上方即可。</li>
+          </ol>
+        </div>
+      </div>
+      <div class="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+        <button type="button" onclick="resetToDefaultDemoData()" class="text-xs font-bold text-rose-600 hover:underline">重置回預設範例資料</button>
+        <button type="button" onclick="closeGDriveModal()" class="px-4 py-1.5 text-xs font-bold bg-slate-800 text-white rounded-xl">關閉</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 底部浮動提示 Toast -->
+  <div id="toast-box" class="hidden fixed bottom-5 right-5 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-xl shadow-2xl border border-slate-700 text-xs font-medium flex items-center gap-2 transition-all">
+    <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i>
+    <span id="toast-message">操作成功</span>
+  </div>
+
+  <script>
+    // =========================================================================
+    // 1. 管線敷設方式色彩規範與光纖色碼定義
+    // =========================================================================
+    const INSTALL_METHODS = {
+      side_ditch: { id: 'side_ditch', name: '側溝', color: '#9333ea', badgeBg: 'bg-purple-100 text-purple-800' },
+      sewer:      { id: 'sewer',      name: '下水道', color: '#16a34a', badgeBg: 'bg-emerald-100 text-emerald-800' },
+      aerial:     { id: 'aerial',     name: '架空附掛', color: '#0284c7', badgeBg: 'bg-sky-100 text-sky-800' },
+      conduit:    { id: 'conduit',    name: '管道', color: '#111827', badgeBg: 'bg-slate-200 text-slate-900' }
+    };
+
+    const FIBER_COLORS = [
+      { name: '藍', hex: '#2563eb', text: '#ffffff', border: '#1d4ed8' },
+      { name: '橘', hex: '#f97316', text: '#ffffff', border: '#c2410c' },
+      { name: '綠', hex: '#16a34a', text: '#ffffff', border: '#15803d' },
+      { name: '棕', hex: '#92400e', text: '#ffffff', border: '#78350f' },
+      { name: '灰', hex: '#64748b', text: '#ffffff', border: '#475569' },
+      { name: '白', hex: '#ffffff', text: '#1e293b', border: '#94a3b8' },
+      { name: '紅', hex: '#dc2626', text: '#ffffff', border: '#b91c1c' },
+      { name: '黑', hex: '#111827', text: '#ffffff', border: '#000000' },
+      { name: '黃', hex: '#eab308', text: '#1e293b', border: '#ca8a04' },
+      { name: '紫', hex: '#9333ea', text: '#ffffff', border: '#7e22ce' },
+      { name: '粉紅', hex: '#ec4899', text: '#ffffff', border: '#db2777' },
+      { name: '水藍', hex: '#06b6d4', text: '#ffffff', border: '#0891b2' }
+    ];
+
+    // 產生連續第 1 ~ totalCores 芯資料結構
+    function generateCores(totalCores, presets = []) {
+      const presetMap = new Map();
+      presets.forEach(p => presetMap.set(Number(p.coreNumber), p));
+
+      const cores = [];
+      for (let i = 1; i <= totalCores; i++) {
+        const colorObj = FIBER_COLORS[(i - 1) % FIBER_COLORS.length];
+        const preset = presetMap.get(i) || {};
+        cores.push({
+          coreNumber: i,
+          colorName: colorObj.name,
+          colorHex: colorObj.hex,
+          textColor: colorObj.text,
+          borderColor: colorObj.border,
+          deviceA: preset.deviceA || '',
+          portA: preset.portA || '',
+          deviceZ: preset.deviceZ || '',
+          portZ: preset.portZ || ''
+        });
+      }
+      return cores;
+    }
+
+    // =========================================================================
+    // 2. 初始預設站點、光纜路由資料與全域狀態變數
+    // =========================================================================
+    let stations = [
+      {
+        id: 'ST-01',
+        name: '土城機房',
+        type: 'co',
+        address: '新北市土城區中央路二段',
+        lat: 24.9855,
+        lng: 121.4452,
+        devices: [
+          { name: 'OLT-TC-01', model: 'Huawei MA5800 OLT', note: '核心局端設備' },
+          { name: 'SW-TC-02', model: 'Cisco ASR-920', note: '骨幹交換器' }
+        ]
+      },
+      {
+        id: 'ST-02',
+        name: '中華路基站 #01',
+        type: 'base_station',
+        address: '新北市土城區中華路一段',
+        lat: 24.9888,
+        lng: 121.4498,
+        devices: [
+          { name: 'BBU-ZH-01', model: '5G 基站主機', note: '中華路主幹節點' },
+          { name: 'ODF-MH01', model: '96芯光纖接續盒', note: '光纜轉接' }
+        ]
+      },
+      {
+        id: 'ST-03',
+        name: '板橋企業客戶 #02',
+        type: 'customer',
+        address: '新北市板橋區四川路二段',
+        lat: 24.9935,
+        lng: 121.4545,
+        devices: [
+          { name: 'CPE-BQ-02', model: '企業專線光電轉換器', note: '專線客戶端' }
+        ]
+      },
+      {
+        id: 'ST-04',
+        name: '板橋機房',
+        type: 'co',
+        address: '新北市板橋區南雅南路二段',
+        lat: 24.9982,
+        lng: 121.4590,
+        devices: [
+          { name: 'SW-BQ-01', model: 'Nokia 7750 SR', note: '板橋匯聚機房' }
+        ]
+      },
+      {
+        id: 'ST-05',
+        name: '金城路基站 #01',
+        type: 'base_station',
+        address: '新北市土城區金城路三段',
+        lat: 24.9840,
+        lng: 121.4535,
+        devices: [
+          { name: 'BBU-JC-01', model: '4G/5G 雙模基站', note: '' }
+        ]
+      },
+      {
+        id: 'ST-06',
+        name: '中和科技園區客戶',
+        type: 'customer',
+        address: '新北市中和區連城路',
+        lat: 24.9895,
+        lng: 121.4632,
+        devices: [
+          { name: 'SW-ZH-01', model: 'L3 企業客戶交換器', note: '中和園區端點' }
+        ]
+      }
+    ];
+
+    let cables = [
+      {
+        id: 'CB-01',
+        name: 'CB-01 土城板橋主幹',
+        installType: 'side_ditch',
+        totalCores: 48,
+        startStation: '土城機房',
+        endStation: '中華路基站 #01',
+        coords: [
+          [24.9855, 121.4452],
+          [24.9871, 121.4475],
+          [24.9888, 121.4498]
+        ],
+        cores: generateCores(48, [
+          { coreNumber: 1, deviceA: 'OLT-TC-01', portA: '1/1/1', deviceZ: 'BBU-ZH-01', portZ: 'A-01' },
+          { coreNumber: 2, deviceA: 'OLT-TC-01', portA: '1/1/2', deviceZ: 'ODF-MH01', portZ: 'A-02' }
+        ])
+      },
+      {
+        id: 'CB-02',
+        name: 'CB-02 中華客戶專線',
+        installType: 'sewer',
+        totalCores: 24,
+        startStation: '中華路基站 #01',
+        endStation: '板橋企業客戶 #02',
+        coords: [
+          [24.9888, 121.4498],
+          [24.9912, 121.4521],
+          [24.9935, 121.4545]
+        ],
+        cores: generateCores(24, [
+          { coreNumber: 1, deviceA: 'ODF-MH01', portA: 'B-01', deviceZ: 'CPE-BQ-02', portZ: 'IN-01' }
+        ])
+      },
+      {
+        id: 'CB-03',
+        name: 'CB-03 板橋匯聚骨幹',
+        installType: 'conduit',
+        totalCores: 96,
+        startStation: '板橋企業客戶 #02',
+        endStation: '板橋機房',
+        coords: [
+          [24.9935, 121.4545],
+          [24.9958, 121.4568],
+          [24.9982, 121.4590]
+        ],
+        cores: generateCores(96, [
+          { coreNumber: 1, deviceA: 'CPE-BQ-02', portA: 'UP-01', deviceZ: 'SW-BQ-01', portZ: 'GE-0/1' },
+          { coreNumber: 2, deviceA: 'CPE-BQ-02', portA: 'UP-02', deviceZ: 'SW-BQ-01', portZ: 'GE-0/2' }
+        ])
+      },
+      {
+        id: 'CB-04',
+        name: 'CB-04 金城中和架空線',
+        installType: 'aerial',
+        totalCores: 12,
+        startStation: '金城路基站 #01',
+        endStation: '中和科技園區客戶',
+        coords: [
+          [24.9840, 121.4535],
+          [24.9868, 121.4584],
+          [24.9895, 121.4632]
+        ],
+        cores: generateCores(12, [
+          { coreNumber: 1, deviceA: 'BBU-JC-01', portA: 'P-01', deviceZ: 'SW-ZH-01', portZ: '1/1/1' }
+        ])
+      }
+    ];
+
+    // 互動狀態變數
+    let currentMode = 'view'; // 'view' | 'station' | 'cable'
+    let drawInstallType = 'side_ditch';
+    let drawTotalCores = 48;
+    let drawingPoints = [];
+    let drawingStartStation = null;
+    let drawingEndStation = null;
+    let tempPolyline = null;
+    let tempBorderPolyline = null;
+    let tempPreviewLine = null;
+    let snapIndicatorMarker = null;
+    let pendingStationLatLng = null;
+
+    let selectedCableId = null;
+    let editingStationId = null;
+    let editingStationDevicesDraft = [];
+    let pendingDeleteStationConfirm = false;
+    let expandedDevicePortPanelIdx = null;
+    let editingCoreNumber = null;
+    let coreStatusFilter = 'ALL';
+    let visibleInstallTypes = new Set(['side_ditch', 'sewer', 'aerial', 'conduit']);
+    let coreFilter = 'ALL';
+    let showLabels = true;
+    let currentBasemap = 'google_roadmap';
+
+    // 迴路搜尋與獨立隔離檢視狀態
+    let circuitSearchQuery = '';
+    let isolatedCableId = null;
+
+    // 本機自動存檔與 Google Drive API 雲端狀態
+    const LOCAL_STORAGE_KEY = 'fiber_gis_system_data_v1';
+    const GDRIVE_CLIENT_ID_KEY = 'fiber_gis_gdrive_client_id';
+    const GDRIVE_DB_FILENAME = 'fiber_routes_cloud_db.json';
+    let gdriveAccessToken = null;
+    let gdriveTokenClient = null;
+    let userLocationMarker = null;
+
+    function persistToLocalStorage() {
+      try {
+        const payload = {
+          updatedAt: new Date().toISOString(),
+          stations,
+          cables
+        };
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(payload));
+      } catch (err) {
+        console.warn('LocalStorage 儲存失敗:', err);
+      }
+    }
+
+    function restoreFromLocalStorage() {
+      try {
+        const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+        if (!raw) return false;
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed.stations) && Array.isArray(parsed.cables)) {
+          stations = parsed.stations.map(st => ({
+            ...st,
+            devices: Array.isArray(st.devices) ? st.devices : []
+          }));
+          cables = parsed.cables;
+          return true;
+        }
+      } catch (err) {
+        console.warn('LocalStorage 讀取失敗:', err);
+      }
+      return false;
+    }
+
+    // =========================================================================
+    // 3. 地圖初始化與圖層管理
+    // =========================================================================
+    const map = L.map('map', {
+      center: [24.9905, 121.4525],
+      zoom: 14,
+      doubleClickZoom: false
+    });
+
+    const baseLayers = {
+      google_roadmap: L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+        attribution: '&copy; Google Maps',
+        maxZoom: 20
+      }),
+      google_hybrid: L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+        attribution: '&copy; Google Maps Satellite',
+        maxZoom: 20
+      }),
+      light: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors',
+        maxZoom: 19
+      }),
+      dark: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap &copy; CARTO',
+        maxZoom: 19
+      })
+    };
+    baseLayers.google_roadmap.addTo(map);
+
+    const cableLayerGroup = L.layerGroup().addTo(map);
+    const stationLayerGroup = L.layerGroup().addTo(map);
+    const drawLayerGroup = L.layerGroup().addTo(map);
+
+    // 確保在各種螢幕與容器載入後自動重新計算地圖尺寸，防止地圖空白
+    function refreshMapSize() {
+      if (map) {
+        map.invalidateSize({ animate: false });
+      }
+    }
+    window.addEventListener('resize', refreshMapSize);
+    window.addEventListener('load', () => {
+      refreshMapSize();
+      setTimeout(refreshMapSize, 300);
+    });
+
+    // =========================================================================
+    // 4. 地理距離計算與站點吸附輔助函式
+    // =========================================================================
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function calculateRouteDistance(coords) {
+      if (!coords || coords.length < 2) return 0;
+      let total = 0;
+      for (let i = 0; i < coords.length - 1; i++) {
+        const p1 = L.latLng(coords[i][0], coords[i][1]);
+        const p2 = L.latLng(coords[i + 1][0], coords[i + 1][1]);
+        total += p1.distanceTo(p2);
+      }
+      return Math.round(total);
+    }
+
+    function isCoreUsed(core) {
+      return Boolean(
+        (core.deviceA && core.deviceA.trim()) ||
+        (core.portA && core.portA.trim()) ||
+        (core.deviceZ && core.deviceZ.trim()) ||
+        (core.portZ && core.portZ.trim())
+      );
+    }
+
+    function findNearestStation(latlng, thresholdMeters = 60) {
+      let nearest = null;
+      let minDist = Infinity;
+      stations.forEach(st => {
+        const stLatLng = L.latLng(st.lat, st.lng);
+        const d = latlng.distanceTo(stLatLng);
+        if (d < thresholdMeters && d < minDist) {
+          minDist = d;
+          nearest = st;
+        }
+      });
+      return nearest;
+    }
+
+    // =========================================================================
+    // 5. 地圖渲染引擎
+    // =========================================================================
+    function createStationIcon(type) {
+      let html = '';
+      if (type === 'co') {
+        // 機房：深藍黑方形標示
+        html = `<div class="w-4 h-4 bg-slate-900 border-2 border-white rounded-sm shadow-md"></div>`;
+      } else if (type === 'base_station') {
+        // 基站：紫色圓形標示
+        html = `<div class="w-4 h-4 bg-purple-600 border-2 border-white rounded-full shadow-md"></div>`;
+      } else {
+        // 客戶：琥珀橘菱形標示
+        html = `<div class="w-3.5 h-3.5 bg-amber-500 border-2 border-white rotate-45 shadow-md"></div>`;
+      }
+      return L.divIcon({
+        html,
+        className: 'custom-station-icon',
+        iconSize: [16, 16],
+        iconAnchor: [8, 8]
+      });
+    }
+
+    function renderMapFeatures() {
+      cableLayerGroup.clearLayers();
+      stationLayerGroup.clearLayers();
+
+      const activeIsolatedCable = isolatedCableId ? cables.find(c => c.id === isolatedCableId) : null;
+
+      cables.forEach(cable => {
+        const installMeta = INSTALL_METHODS[cable.installType] || INSTALL_METHODS.conduit;
+        const isVisible = activeIsolatedCable
+          ? cable.id === activeIsolatedCable.id
+          : (visibleInstallTypes.has(cable.installType) &&
+             (coreFilter === 'ALL' || cable.totalCores === Number(coreFilter)));
+        if (!isVisible) return;
+
+        const isSelected = cable.id === selectedCableId;
+        const casingColor = isSelected ? '#facc15' : (cable.installType === 'conduit' ? '#ffffff' : 'rgba(255,255,255,0.75)');
+        const casingWeight = isSelected ? 11 : 8;
+
+        const borderLine = L.polyline(cable.coords, {
+          color: casingColor,
+          weight: casingWeight,
+          opacity: 0.95,
+          lineCap: 'round',
+          lineJoin: 'round'
+        }).addTo(cableLayerGroup);
+
+        const mainLine = L.polyline(cable.coords, {
+          color: installMeta.color,
+          weight: isSelected ? 6 : 4.5,
+          opacity: 1,
+          lineCap: 'round',
+          lineJoin: 'round'
+        }).addTo(cableLayerGroup);
+
+        if (showLabels || activeIsolatedCable) {
+          const usedCount = cable.cores.filter(c => isCoreUsed(c)).length;
+          const labelHtml = `
+            <div class="flex items-center gap-1">
+              <span style="background:${installMeta.color};" class="w-2 h-2 rounded-full inline-block"></span>
+              <span>${cable.name}</span>
+              <span class="text-indigo-700">[${installMeta.name}·${cable.totalCores}C]</span>
+              <span class="text-slate-500 font-normal">(${usedCount}/${cable.totalCores})</span>
+            </div>
+          `;
+          mainLine.bindTooltip(labelHtml, {
+            permanent: true,
+            direction: 'center',
+            className: 'cable-badge-tooltip'
+          });
+        }
+
+        const handleCableClick = (e) => {
+          if (currentMode !== 'view') return;
+          L.DomEvent.stopPropagation(e);
+          openRightPanel(cable.id);
+        };
+        mainLine.on('click', handleCableClick);
+        borderLine.on('click', handleCableClick);
+      });
+
+      stations.forEach(st => {
+        if (activeIsolatedCable) {
+          const isEndpoint = st.name === activeIsolatedCable.startStation || st.name === activeIsolatedCable.endStation;
+          const isOnRoute = activeIsolatedCable.coords.some(pt => Math.abs(pt[0] - st.lat) < 0.0001 && Math.abs(pt[1] - st.lng) < 0.0001);
+          if (!isEndpoint && !isOnRoute) return;
+        }
+
+        const marker = L.marker([st.lat, st.lng], {
+          icon: createStationIcon(st.type),
+          zIndexOffset: 500
+        }).addTo(stationLayerGroup);
+
+        if (showLabels || activeIsolatedCable) {
+          marker.bindTooltip(st.name, {
+            permanent: true,
+            direction: 'top',
+            offset: [0, -8],
+            className: 'station-label-tooltip'
+          });
+        }
+
+        marker.on('click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          if (currentMode === 'cable') {
+            addDrawingVertex(L.latLng(st.lat, st.lng), st);
+          } else if (currentMode === 'view') {
+            openEditStationModal(st.id);
+          }
+        });
+      });
+
+      updateLegendAndStats();
+      renderCircuitSearchResults();
+    }
+
+    function updateLegendAndStats() {
+      const container = document.getElementById('legend-install-list');
+      container.innerHTML = '';
+
+      let totalSegments = 0;
+      let totalMeters = 0;
+
+      const targetCables = isolatedCableId ? cables.filter(c => c.id === isolatedCableId) : cables;
+
+      Object.values(INSTALL_METHODS).forEach(method => {
+        const matchedCables = targetCables.filter(c => c.installType === method.id);
+        const segCount = matchedCables.length;
+        const segLength = matchedCables.reduce((sum, c) => sum + calculateRouteDistance(c.coords), 0);
+
+        totalSegments += segCount;
+        totalMeters += segLength;
+
+        const checked = visibleInstallTypes.has(method.id);
+        const row = document.createElement('label');
+        row.className = `flex items-center justify-between p-2 rounded-xl border cursor-pointer transition ${
+          checked ? 'bg-white border-slate-300 shadow-2xs' : 'bg-slate-100/70 border-transparent opacity-60'
+        }`;
+        row.innerHTML = `
+          <div class="flex items-center gap-2.5">
+            <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleInstallFilter('${method.id}')" class="rounded accent-indigo-600 w-3.5 h-3.5" />
+            <span style="background-color: ${method.color};" class="w-5 h-2 rounded-full border border-slate-300 inline-block shrink-0"></span>
+            <span class="text-xs font-bold text-slate-800">${method.name}</span>
+          </div>
+          <div class="text-right">
+            <span class="text-xs font-mono font-bold text-slate-700">${segLength.toLocaleString()} m</span>
+            <span class="text-[10px] text-slate-400 ml-1">(${segCount}段)</span>
+          </div>
+        `;
+        container.appendChild(row);
+      });
+
+      document.getElementById('stat-total-cables').textContent = `${totalSegments} 迴路`;
+      document.getElementById('stat-total-length').textContent = `${totalMeters.toLocaleString()} m`;
+      document.getElementById('stat-total-stations').textContent = `${stations.length} 處`;
+    }
+
+    // =========================================================================
+    // 5.5 光纜迴路搜尋與「只顯示查詢迴路路由及資訊」控制
+    // =========================================================================
+    function onCircuitSearchInput() {
+      const inputEl = document.getElementById('circuit-search-input');
+      circuitSearchQuery = inputEl.value.trim();
+      document.getElementById('btn-clear-search-text').classList.toggle('hidden', !circuitSearchQuery);
+
+      const matched = getMatchedCablesByQuery();
+      if (document.getElementById('chk-isolate-circuit').checked && matched.length === 1) {
+        selectAndFocusCircuit(matched[0].id, true);
+        return;
+      }
+      renderCircuitSearchResults();
+    }
+
+    function clearCircuitSearchInput() {
+      document.getElementById('circuit-search-input').value = '';
+      circuitSearchQuery = '';
+      document.getElementById('btn-clear-search-text').classList.add('hidden');
+      renderCircuitSearchResults();
+    }
+
+    function getMatchedCablesByQuery() {
+      if (!circuitSearchQuery) return cables;
+      const q = circuitSearchQuery.toLowerCase();
+      return cables.filter(c =>
+        c.name.toLowerCase().includes(q) ||
+        c.id.toLowerCase().includes(q) ||
+        (c.startStation && c.startStation.toLowerCase().includes(q)) ||
+        (c.endStation && c.endStation.toLowerCase().includes(q))
+      );
+    }
+
+    function renderCircuitSearchResults() {
+      const listEl = document.getElementById('circuit-search-results');
+      if (!listEl) return;
+      listEl.innerHTML = '';
+
+      const matched = getMatchedCablesByQuery();
+      if (matched.length === 0) {
+        listEl.innerHTML = `<div class="text-[11px] text-slate-400 text-center py-2">查無符合「${circuitSearchQuery}」的光纜迴路</div>`;
+        return;
+      }
+
+      matched.forEach(c => {
+        const meta = INSTALL_METHODS[c.installType] || INSTALL_METHODS.conduit;
+        const isCurrent = c.id === selectedCableId || c.id === isolatedCableId;
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.onclick = () => selectAndFocusCircuit(c.id, document.getElementById('chk-isolate-circuit').checked);
+        item.className = `w-full text-left px-2.5 py-1.5 rounded-lg border text-xs flex items-center justify-between gap-1.5 transition ${
+          isCurrent
+            ? 'bg-indigo-600 text-white border-indigo-600 font-bold shadow-2xs'
+            : 'bg-white hover:bg-indigo-50 text-slate-800 border-slate-200 font-medium'
+        }`;
+        item.innerHTML = `
+          <div class="flex items-center gap-1.5 min-w-0">
+            <span style="background-color:${meta.color};" class="w-2.5 h-2.5 rounded-full border border-white shrink-0"></span>
+            <span class="truncate">${c.name}</span>
+          </div>
+          <span class="text-[10px] shrink-0 ${isCurrent ? 'text-indigo-100' : 'text-slate-400'}">${c.totalCores}C</span>
+        `;
+        listEl.appendChild(item);
+      });
+    }
+
+    function selectAndFocusCircuit(cableId, shouldIsolate = false) {
+      const cable = cables.find(c => c.id === cableId);
+      if (!cable) return;
+
+      if (shouldIsolate) {
+        isolatedCableId = cable.id;
+        document.getElementById('chk-isolate-circuit').checked = true;
+        document.getElementById('btn-clear-circuit-isolate').classList.remove('hidden');
+      }
+
+      openRightPanel(cable.id);
+
+      if (cable.coords && cable.coords.length > 0) {
+        const bounds = L.latLngBounds(cable.coords);
+        map.fitBounds(bounds, { padding: [90, 90], maxZoom: 16 });
+      }
+    }
+
+    function toggleIsolateCircuitMode() {
+      const checked = document.getElementById('chk-isolate-circuit').checked;
+      if (checked) {
+        const matched = getMatchedCablesByQuery();
+        const targetId = selectedCableId || (matched.length > 0 ? matched[0].id : null);
+        if (!targetId) {
+          document.getElementById('chk-isolate-circuit').checked = false;
+          showToast('請先點選或搜尋要單獨顯示的光纜迴路');
+          return;
+        }
+        selectAndFocusCircuit(targetId, true);
+        showToast('已切換為「只顯示此查詢迴路路由及資訊」');
+      } else {
+        isolatedCableId = null;
+        document.getElementById('btn-clear-circuit-isolate').classList.add('hidden');
+        if (selectedCableId) openRightPanel(selectedCableId);
+        else renderMapFeatures();
+        showToast('已恢復顯示全部光纜迴路');
+      }
+    }
+
+    function toggleIsolateFromDetailPanel() {
+      if (!selectedCableId) return;
+      if (isolatedCableId === selectedCableId) {
+        isolatedCableId = null;
+        document.getElementById('chk-isolate-circuit').checked = false;
+        document.getElementById('btn-clear-circuit-isolate').classList.add('hidden');
+        openRightPanel(selectedCableId);
+        showToast('已恢復顯示全部光纜迴路');
+      } else {
+        selectAndFocusCircuit(selectedCableId, true);
+        showToast('已切換為只顯示此迴路路由及資訊');
+      }
+    }
+
+    function clearCircuitSearchAndIsolate() {
+      isolatedCableId = null;
+      document.getElementById('chk-isolate-circuit').checked = false;
+      document.getElementById('btn-clear-circuit-isolate').classList.add('hidden');
+      clearCircuitSearchInput();
+      if (selectedCableId) openRightPanel(selectedCableId);
+      else renderMapFeatures();
+      showToast('已顯示全部光纜迴路');
+    }
+
+    // =========================================================================
+    // 6. 模式切換與光纜路由即時繪製邏輯
+    // =========================================================================
+    function setMode(mode) {
+      currentMode = mode;
+      const mapEl = document.getElementById('map');
+
+      document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.className = 'mode-btn flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition';
+      });
+
+      const activeBtn = document.getElementById(`btn-mode-${mode}`);
+      if (activeBtn) {
+        activeBtn.className = 'mode-btn flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold bg-indigo-600 text-white shadow transition';
+      }
+
+      document.getElementById('draw-toolbar').classList.toggle('hidden', mode !== 'cable');
+      document.getElementById('station-hint-banner').classList.toggle('hidden', mode !== 'station');
+
+      if (mode === 'cable' || mode === 'station') {
+        mapEl.classList.add('crosshair-cursor');
+      } else {
+        mapEl.classList.remove('crosshair-cursor');
+      }
+
+      clearTempDrawing();
+    }
+
+    function clearTempDrawing() {
+      drawingPoints = [];
+      drawingStartStation = null;
+      drawingEndStation = null;
+      tempPolyline = null;
+      tempBorderPolyline = null;
+      tempPreviewLine = null;
+      snapIndicatorMarker = null;
+      drawLayerGroup.clearLayers();
+      document.getElementById('draw-live-distance').textContent = '0 m';
+    }
+
+    function selectDrawInstallType(type) {
+      drawInstallType = type;
+      document.querySelectorAll('.install-choice').forEach(btn => {
+        const isMatch = btn.dataset.type === type;
+        if (isMatch) {
+          btn.className = 'install-choice active-choice flex flex-col items-center justify-center p-1.5 rounded-lg border-2 border-indigo-600 bg-indigo-50 text-indigo-900 font-bold';
+        } else {
+          btn.className = 'install-choice flex flex-col items-center justify-center p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-medium';
+        }
+      });
+      refreshTempDrawingStyle();
+    }
+
+    function selectDrawCores(coresCount) {
+      drawTotalCores = coresCount;
+      document.querySelectorAll('.core-choice').forEach(btn => {
+        const isMatch = Number(btn.dataset.cores) === coresCount;
+        btn.className = isMatch
+          ? 'core-choice py-2 rounded-lg border-2 border-indigo-600 bg-indigo-50 font-bold text-indigo-800'
+          : 'core-choice py-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 font-semibold text-slate-700';
+      });
+    }
+
+    function refreshTempDrawingStyle() {
+      const meta = INSTALL_METHODS[drawInstallType];
+      if (tempPolyline) {
+        tempPolyline.setStyle({ color: meta.color });
+      }
+      if (tempPreviewLine) {
+        tempPreviewLine.setStyle({ color: meta.color });
+      }
+    }
+
+    function addDrawingVertex(latlng, snappedStation = null) {
+      const pt = snappedStation ? [snappedStation.lat, snappedStation.lng] : [latlng.lat, latlng.lng];
+
+      if (drawingPoints.length === 0) {
+        drawingStartStation = snappedStation ? snappedStation.name : '自訂起點';
+      }
+      drawingEndStation = snappedStation ? snappedStation.name : '自訂終點';
+
+      drawingPoints.push(pt);
+      redrawTempCable();
+    }
+
+    function undoLastPoint() {
+      if (drawingPoints.length === 0) return;
+      drawingPoints.pop();
+      if (drawingPoints.length === 0) {
+        clearTempDrawing();
+      } else {
+        redrawTempCable();
+      }
+    }
+
+    function redrawTempCable() {
+      drawLayerGroup.clearLayers();
+      const meta = INSTALL_METHODS[drawInstallType];
+
+      if (drawingPoints.length >= 2) {
+        tempBorderPolyline = L.polyline(drawingPoints, {
+          color: '#ffffff',
+          weight: 9,
+          opacity: 0.9
+        }).addTo(drawLayerGroup);
+
+        tempPolyline = L.polyline(drawingPoints, {
+          color: meta.color,
+          weight: 5,
+          opacity: 1
+        }).addTo(drawLayerGroup);
+      }
+
+      drawingPoints.forEach((pt, idx) => {
+        L.circleMarker(pt, {
+          radius: idx === 0 || idx === drawingPoints.length - 1 ? 6 : 4,
+          color: '#ffffff',
+          weight: 2,
+          fillColor: meta.color,
+          fillOpacity: 1
+        }).addTo(drawLayerGroup);
+      });
+
+      const dist = calculateRouteDistance(drawingPoints);
+      document.getElementById('draw-live-distance').textContent = `${dist.toLocaleString()} m`;
+    }
+
+    function finishDrawingCable() {
+      if (drawingPoints.length < 2) {
+        showToast('請至少在地圖上點擊 2 個點位以建立光纜路由');
+        return;
+      }
+
+      const nextNum = cables.length + 1;
+      const defaultId = `CB-${String(nextNum).padStart(2, '0')}`;
+      const dist = calculateRouteDistance(drawingPoints);
+
+      document.getElementById('modal-cable-name').value = defaultId;
+      document.getElementById('modal-cable-length').value = `${dist.toLocaleString()} m`;
+      document.getElementById('modal-cable-cores').value = String(drawTotalCores);
+      document.getElementById('modal-start-station').value = drawingStartStation || '起點站';
+      document.getElementById('modal-end-station').value = drawingEndStation || '終點站';
+
+      document.querySelectorAll('input[name="modal-install"]').forEach(radio => {
+        radio.checked = radio.value === drawInstallType;
+      });
+
+      document.getElementById('modal-new-cable').classList.remove('hidden');
+    }
+
+    function cancelNewCableModal() {
+      document.getElementById('modal-new-cable').classList.add('hidden');
+    }
+
+    function confirmSaveNewCable() {
+      const rawName = document.getElementById('modal-cable-name').value.trim() || `CB-${cables.length + 1}`;
+      const cableId = rawName.split(' ')[0];
+      const installRadio = document.querySelector('input[name="modal-install"]:checked');
+      const installType = installRadio ? installRadio.value : drawInstallType;
+      const totalCores = Number(document.getElementById('modal-cable-cores').value);
+      const startStation = document.getElementById('modal-start-station').value.trim() || '起點';
+      const endStation = document.getElementById('modal-end-station').value.trim() || '終點';
+
+      const newCable = {
+        id: cableId,
+        name: rawName,
+        installType,
+        totalCores,
+        startStation,
+        endStation,
+        coords: [...drawingPoints],
+        cores: generateCores(totalCores)
+      };
+
+      cables.push(newCable);
+      persistToLocalStorage();
+      document.getElementById('modal-new-cable').classList.add('hidden');
+      setMode('view');
+      renderMapFeatures();
+      openRightPanel(newCable.id);
+      showToast(`已成功建立光纜迴路「${newCable.name}」（${INSTALL_METHODS[installType].name} · ${totalCores} 芯）`);
+    }
+
+    // =========================================================================
+    // 7. 地圖滑鼠與點擊互動事件
+    // =========================================================================
+    map.on('click', (e) => {
+      if (currentMode === 'station') {
+        pendingStationLatLng = e.latlng;
+        document.getElementById('station-name-input').value = `基站 #${String(stations.length + 1).padStart(2, '0')}`;
+        document.getElementById('station-address-input').value = '';
+        document.getElementById('station-coord-preview').textContent =
+          `座標：${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}`;
+        document.getElementById('modal-new-station').classList.remove('hidden');
+      } else if (currentMode === 'cable') {
+        const snapped = findNearestStation(e.latlng);
+        addDrawingVertex(e.latlng, snapped);
+      }
+    });
+
+    map.on('dblclick', (e) => {
+      if (currentMode === 'cable' && drawingPoints.length >= 2) {
+        L.DomEvent.stopPropagation(e);
+        finishDrawingCable();
+      }
+    });
+
+    map.on('mousemove', (e) => {
+      if (currentMode !== 'cable') return;
+
+      const snapped = findNearestStation(e.latlng);
+      const targetLatLng = snapped ? L.latLng(snapped.lat, snapped.lng) : e.latlng;
+
+      if (snapIndicatorMarker) {
+        drawLayerGroup.removeLayer(snapIndicatorMarker);
+        snapIndicatorMarker = null;
+      }
+      if (snapped) {
+        snapIndicatorMarker = L.circleMarker([snapped.lat, snapped.lng], {
+          radius: 12,
+          color: '#10b981',
+          weight: 3,
+          fillColor: '#34d399',
+          fillOpacity: 0.25
+        }).addTo(drawLayerGroup);
+      }
+
+      if (drawingPoints.length > 0) {
+        const lastPt = drawingPoints[drawingPoints.length - 1];
+        const meta = INSTALL_METHODS[drawInstallType];
+        if (tempPreviewLine) {
+          drawLayerGroup.removeLayer(tempPreviewLine);
+        }
+        tempPreviewLine = L.polyline([lastPt, [targetLatLng.lat, targetLatLng.lng]], {
+          color: meta.color,
+          weight: 3.5,
+          dashArray: '6, 6',
+          opacity: 0.85
+        }).addTo(drawLayerGroup);
+
+        const previewDist = calculateRouteDistance([...drawingPoints, [targetLatLng.lat, targetLatLng.lng]]);
+        document.getElementById('draw-live-distance').textContent = `${previewDist.toLocaleString()} m`;
+      }
+    });
+
+    function closeStationModal() {
+      document.getElementById('modal-new-station').classList.add('hidden');
+      pendingStationLatLng = null;
+    }
+
+    function confirmSaveStation() {
+      if (!pendingStationLatLng) return;
+      const name = document.getElementById('station-name-input').value.trim() || `新站點 #${stations.length + 1}`;
+      const type = document.getElementById('station-type-input').value;
+      const address = (document.getElementById('station-address-input')?.value || '').trim();
+      const rawDevices = (document.getElementById('station-init-devices-input')?.value || '').trim();
+      const devices = rawDevices
+        ? rawDevices.split(/[,，、;；]/).map(s => s.trim()).filter(Boolean).map(devName => ({
+            name: devName,
+            model: '',
+            note: ''
+          }))
+        : [];
+
+      stations.push({
+        id: `ST-${Date.now().toString().slice(-4)}`,
+        name,
+        type,
+        address,
+        lat: pendingStationLatLng.lat,
+        lng: pendingStationLatLng.lng,
+        devices
+      });
+
+      if (document.getElementById('station-init-devices-input')) {
+        document.getElementById('station-init-devices-input').value = '';
+      }
+      persistToLocalStorage();
+      closeStationModal();
+      setMode('view');
+      renderMapFeatures();
+      showToast(`已新增站點「${name}」`);
+    }
+
+    // =========================================================================
+    // 7.5 點選站點編輯站內設備與刪除站點、Excel 匯入站點（含地址定位與雲端讀取）
+    // =========================================================================
+    function openEditStationModal(stationId) {
+      const st = stations.find(s => s.id === stationId);
+      if (!st) return;
+
+      editingStationId = stationId;
+      pendingDeleteStationConfirm = false;
+      expandedDevicePortPanelIdx = null;
+      editingStationDevicesDraft = Array.isArray(st.devices)
+        ? st.devices.map(d => ({
+            name: d.name || '',
+            model: d.model || '',
+            note: d.note || '',
+            ports: Array.isArray(d.ports)
+              ? d.ports.map(p => ({
+                  portName: p.portName || '',
+                  status: p.status || 'used',
+                  targetInfo: p.targetInfo || '',
+                  note: p.note || ''
+                }))
+              : []
+          }))
+        : [];
+
+      const validTypes = ['co', 'base_station', 'customer'];
+      const normalizedType = validTypes.includes(st.type) ? st.type : 'base_station';
+
+      document.getElementById('edit-station-modal-title').textContent = `站點管理：${st.name}`;
+      document.getElementById('edit-station-name').value = st.name;
+      document.getElementById('edit-station-type').value = normalizedType;
+      document.getElementById('edit-station-address').value = st.address || '';
+      document.getElementById('new-dev-name').value = '';
+      document.getElementById('new-dev-model').value = '';
+
+      const linkedCables = cables.filter(c => c.startStation === st.name || c.endStation === st.name);
+      document.getElementById('edit-station-coords').innerHTML = `
+        <span>座標：${st.lat.toFixed(6)}, ${st.lng.toFixed(6)}</span>
+        <span class="text-indigo-600 font-sans font-bold">關聯光纜：${linkedCables.length} 條</span>
+      `;
+
+      const delBtn = document.getElementById('btn-delete-station');
+      delBtn.innerHTML = `<i data-lucide="trash-2" class="w-3.5 h-3.5"></i> 刪除此站點`;
+      delBtn.className = 'px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-1';
+
+      renderStationDevicesDraftList();
+      document.getElementById('modal-edit-station').classList.remove('hidden');
+      lucide.createIcons();
+    }
+
+    function closeEditStationModal() {
+      document.getElementById('modal-edit-station').classList.add('hidden');
+      editingStationId = null;
+      editingStationDevicesDraft = [];
+      expandedDevicePortPanelIdx = null;
+      pendingDeleteStationConfirm = false;
+    }
+
+    function getAutoLinkedCablePortsForDevice(stationName, deviceName) {
+      if (!deviceName) return [];
+      const devUpper = deviceName.trim().toUpperCase();
+      const linked = [];
+      cables.forEach(c => {
+        c.cores.forEach(core => {
+          if (core.deviceA && core.deviceA.trim().toUpperCase() === devUpper) {
+            linked.push({
+              portName: core.portA || `第${core.coreNumber}芯`,
+              cableName: c.name,
+              coreNumber: core.coreNumber,
+              peerInfo: `${core.deviceZ || c.endStation || '乙端'} ${core.portZ ? `(${core.portZ})` : ''}`.trim()
+            });
+          } else if (core.deviceZ && core.deviceZ.trim().toUpperCase() === devUpper) {
+            linked.push({
+              portName: core.portZ || `第${core.coreNumber}芯`,
+              cableName: c.name,
+              coreNumber: core.coreNumber,
+              peerInfo: `${core.deviceA || c.startStation || '甲端'} ${core.portA ? `(${core.portA})` : ''}`.trim()
+            });
+          }
+        });
+      });
+      return linked;
+    }
+
+    function renderStationDevicesDraftList() {
+      const container = document.getElementById('station-devices-list');
+      const badge = document.getElementById('station-device-count-badge');
+      badge.textContent = `${editingStationDevicesDraft.length} 台設備`;
+      container.innerHTML = '';
+
+      if (editingStationDevicesDraft.length === 0) {
+        container.innerHTML = `
+          <div class="text-center py-6 text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+            此站點目前尚未登錄任何設備，可於上方輸入新增
+          </div>
+        `;
+        return;
+      }
+
+      const currentStName = document.getElementById('edit-station-name')?.value.trim() || '';
+
+      editingStationDevicesDraft.forEach((dev, idx) => {
+        if (!Array.isArray(dev.ports)) dev.ports = [];
+        const autoLinked = getAutoLinkedCablePortsForDevice(currentStName, dev.name);
+        const totalPortCount = dev.ports.length + autoLinked.length;
+        const isExpanded = expandedDevicePortPanelIdx === idx;
+
+        const card = document.createElement('div');
+        card.className = 'bg-white border border-slate-200 rounded-xl overflow-hidden shadow-2xs';
+
+        let portsPanelHtml = '';
+        if (isExpanded) {
+          const customPortsHtml = dev.ports.map((p, pIdx) => `
+            <div class="grid grid-cols-12 gap-1.5 items-center bg-white p-1.5 rounded-lg border border-slate-200">
+              <input type="text" value="${escapeHtml(p.portName)}" onchange="updateDevicePortField(${idx}, ${pIdx}, 'portName', this.value)" placeholder="Port位 (如 1/1/1)" class="col-span-3 px-2 py-1 bg-slate-50 border border-slate-300 rounded font-mono font-bold text-slate-800 text-[11px] focus:bg-white focus:outline-none focus:border-indigo-500" />
+              <select onchange="updateDevicePortField(${idx}, ${pIdx}, 'status', this.value)" class="col-span-3 px-1.5 py-1 bg-slate-50 border border-slate-300 rounded font-bold text-[11px] text-slate-700 focus:outline-none">
+                <option value="used" ${p.status === 'used' ? 'selected' : ''}>🟢 已使用</option>
+                <option value="free" ${p.status === 'free' ? 'selected' : ''}>⚪ 空閒</option>
+                <option value="reserved" ${p.status === 'reserved' ? 'selected' : ''}>🟡 保留</option>
+                <option value="fault" ${p.status === 'fault' ? 'selected' : ''}>🔴 故障</option>
+              </select>
+              <input type="text" value="${escapeHtml(p.targetInfo)}" onchange="updateDevicePortField(${idx}, ${pIdx}, 'targetInfo', this.value)" placeholder="跳接去向 / 迴路 / 備註" class="col-span-5 px-2 py-1 bg-slate-50 border border-slate-300 rounded text-slate-700 text-[11px] focus:bg-white focus:outline-none focus:border-indigo-500" />
+              <button type="button" onclick="removeDevicePort(${idx}, ${pIdx})" class="col-span-1 p-1 text-rose-500 hover:bg-rose-50 rounded flex items-center justify-center" title="刪除此 Port">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+          `).join('');
+
+          const linkedPortsHtml = autoLinked.map(lp => `
+            <div class="flex items-center justify-between bg-indigo-50/80 px-2.5 py-1.5 rounded-lg border border-indigo-200 text-[11px]">
+              <div class="flex items-center gap-1.5 min-w-0">
+                <span class="px-1.5 py-0.5 bg-indigo-600 text-white rounded font-mono font-bold text-[10px] shrink-0">${escapeHtml(lp.portName)}</span>
+                <span class="font-bold text-indigo-950 truncate">${escapeHtml(lp.cableName)} 第${lp.coreNumber}芯</span>
+              </div>
+              <span class="text-slate-600 truncate ml-2">➔ ${escapeHtml(lp.peerInfo)}</span>
+            </div>
+          `).join('');
+
+          portsPanelHtml = `
+            <div class="bg-slate-50 border-t border-slate-200 p-2.5 space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] font-bold text-slate-700 flex items-center gap-1">
+                  <i data-lucide="plug" class="w-3 h-3 text-indigo-600"></i>
+                  「${escapeHtml(dev.name)}」PORT 位明細與跳接資訊
+                </span>
+                <div class="flex items-center gap-1">
+                  <button type="button" onclick="batchAddDevicePorts(${idx}, 4)" class="px-2 py-0.5 bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 rounded text-[10px] font-bold">
+                    + 批次4埠
+                  </button>
+                  <button type="button" onclick="addDevicePort(${idx})" class="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[10px] font-bold flex items-center gap-0.5">
+                    <i data-lucide="plus" class="w-3 h-3"></i> 新增 Port
+                  </button>
+                </div>
+              </div>
+
+              ${linkedPortsHtml ? `<div class="space-y-1"><div class="text-[10px] font-bold text-indigo-700">光纜芯數已關聯 Port 位（自動同步）：</div>${linkedPortsHtml}</div>` : ''}
+
+              <div class="space-y-1.5">
+                ${customPortsHtml || (!linkedPortsHtml ? '<div class="text-[11px] text-slate-400 text-center py-2">尚未建立自訂 Port 位，點擊右上角「新增 Port」開始編輯</div>' : '')}
+              </div>
+            </div>
+          `;
+        }
+
+        card.innerHTML = `
+          <div class="p-2.5 flex items-center gap-2">
+            <div class="w-7 h-7 rounded-lg bg-slate-900 text-amber-400 flex items-center justify-center font-bold text-[11px] shrink-0">
+              ${idx + 1}
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5 flex-1 min-w-0">
+              <input type="text" value="${escapeHtml(dev.name)}" onchange="updateDraftDevice(${idx}, 'name', this.value)" placeholder="設備編號" class="px-2 py-1 bg-slate-50 border border-slate-300 rounded font-bold text-slate-800 text-xs focus:bg-white focus:outline-none focus:border-indigo-500" />
+              <input type="text" value="${escapeHtml(dev.model)}" onchange="updateDraftDevice(${idx}, 'model', this.value)" placeholder="型號/規格/備註" class="px-2 py-1 bg-slate-50 border border-slate-300 rounded text-slate-700 text-xs focus:bg-white focus:outline-none focus:border-indigo-500" />
+            </div>
+            <button type="button" onclick="toggleDevicePortPanel(${idx})" class="px-2.5 py-1.5 rounded-lg text-[11px] font-bold shrink-0 flex items-center gap-1 border transition ${
+              isExpanded
+                ? 'bg-indigo-600 text-white border-indigo-600'
+                : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border-indigo-200'
+            }" title="展開編輯此設備的 PORT 位資訊">
+              <i data-lucide="plug" class="w-3.5 h-3.5"></i>
+              <span>Port (${totalPortCount})</span>
+            </button>
+            <button type="button" onclick="removeDraftDevice(${idx})" class="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg shrink-0" title="移除此設備">
+              <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+          </div>
+          ${portsPanelHtml}
+        `;
+        container.appendChild(card);
+      });
+      lucide.createIcons();
+    }
+
+    function toggleDevicePortPanel(deviceIdx) {
+      expandedDevicePortPanelIdx = expandedDevicePortPanelIdx === deviceIdx ? null : deviceIdx;
+      renderStationDevicesDraftList();
+    }
+
+    function addDevicePort(deviceIdx) {
+      const dev = editingStationDevicesDraft[deviceIdx];
+      if (!dev) return;
+      if (!Array.isArray(dev.ports)) dev.ports = [];
+      const nextNum = dev.ports.length + 1;
+      dev.ports.push({
+        portName: `1/1/${nextNum}`,
+        status: 'used',
+        targetInfo: '',
+        note: ''
+      });
+      expandedDevicePortPanelIdx = deviceIdx;
+      renderStationDevicesDraftList();
+    }
+
+    function batchAddDevicePorts(deviceIdx, count = 4) {
+      const dev = editingStationDevicesDraft[deviceIdx];
+      if (!dev) return;
+      if (!Array.isArray(dev.ports)) dev.ports = [];
+      const startNum = dev.ports.length + 1;
+      for (let i = 0; i < count; i++) {
+        dev.ports.push({
+          portName: `1/1/${startNum + i}`,
+          status: 'free',
+          targetInfo: '',
+          note: ''
+        });
+      }
+      expandedDevicePortPanelIdx = deviceIdx;
+      renderStationDevicesDraftList();
+      showToast(`已為「${dev.name}」批次建立 ${count} 個 Port 位`);
+    }
+
+    function updateDevicePortField(deviceIdx, portIdx, field, val) {
+      const dev = editingStationDevicesDraft[deviceIdx];
+      if (dev && Array.isArray(dev.ports) && dev.ports[portIdx]) {
+        dev.ports[portIdx][field] = val.trim();
+      }
+    }
+
+    function removeDevicePort(deviceIdx, portIdx) {
+      const dev = editingStationDevicesDraft[deviceIdx];
+      if (dev && Array.isArray(dev.ports)) {
+        dev.ports.splice(portIdx, 1);
+        renderStationDevicesDraftList();
+      }
+    }
+
+    function updateDraftDevice(deviceIdx, field, val) {
+      const dev = editingStationDevicesDraft[deviceIdx];
+      if (dev) {
+        dev[field] = val.trim();
+      }
+    }
+
+    function removeDraftDevice(deviceIdx) {
+      editingStationDevicesDraft.splice(deviceIdx, 1);
+      if (expandedDevicePortPanelIdx === deviceIdx) {
+        expandedDevicePortPanelIdx = null;
+      } else if (expandedDevicePortPanelIdx !== null && expandedDevicePortPanelIdx > deviceIdx) {
+        expandedDevicePortPanelIdx -= 1;
+      }
+      renderStationDevicesDraftList();
+    }
+
+    function addDeviceToCurrentStation() {
+      const nameInput = document.getElementById('new-dev-name');
+      const modelInput = document.getElementById('new-dev-model');
+      const name = nameInput.value.trim();
+      const model = modelInput.value.trim();
+
+      if (!name) {
+        showToast('請輸入設備編號（例如 OLT-01 或 ODF-01）');
+        nameInput.focus();
+        return;
+      }
+
+      editingStationDevicesDraft.push({ name, model, note: '', ports: [] });
+      expandedDevicePortPanelIdx = editingStationDevicesDraft.length - 1;
+      nameInput.value = '';
+      modelInput.value = '';
+      renderStationDevicesDraftList();
+      showToast(`已加入設備「${name}」，可直接於下方新增或編輯 Port 位`);
+    }
+
+    function saveEditStationModal() {
+      const st = stations.find(s => s.id === editingStationId);
+      if (!st) return;
+
+      const oldName = st.name;
+      const newName = document.getElementById('edit-station-name').value.trim() || oldName;
+      const newType = document.getElementById('edit-station-type').value;
+      const newAddress = document.getElementById('edit-station-address').value.trim();
+
+      st.name = newName;
+      st.type = newType;
+      st.address = newAddress;
+      st.devices = editingStationDevicesDraft
+        .filter(d => d.name && d.name.trim())
+        .map(d => ({
+          name: d.name.trim(),
+          model: (d.model || '').trim(),
+          note: (d.note || '').trim(),
+          ports: Array.isArray(d.ports)
+            ? d.ports
+                .filter(p => p.portName && p.portName.trim())
+                .map(p => ({
+                  portName: p.portName.trim(),
+                  status: p.status || 'used',
+                  targetInfo: (p.targetInfo || '').trim(),
+                  note: (p.note || '').trim()
+                }))
+            : []
+        }));
+
+      // 若站點更名，同步更新起訖站點名稱
+      if (oldName !== newName) {
+        cables.forEach(c => {
+          if (c.startStation === oldName) c.startStation = newName;
+          if (c.endStation === oldName) c.endStation = newName;
+        });
+      }
+
+      persistToLocalStorage();
+      closeEditStationModal();
+      renderMapFeatures();
+      if (selectedCableId) openRightPanel(selectedCableId);
+      showToast(`已儲存站點「${newName}」（共 ${st.devices.length} 台設備）`);
+    }
+
+    function deleteCurrentStation() {
+      const st = stations.find(s => s.id === editingStationId);
+      if (!st) return;
+
+      const delBtn = document.getElementById('btn-delete-station');
+      if (!pendingDeleteStationConfirm) {
+        pendingDeleteStationConfirm = true;
+        delBtn.innerHTML = `<i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i> 再點一次確認刪除`;
+        delBtn.className = 'px-3 py-2 text-xs font-bold bg-rose-600 text-white rounded-xl flex items-center gap-1 shadow';
+        lucide.createIcons();
+        showToast(`確定要刪除「${st.name}」嗎？請再點一次按鈕確認`);
+        return;
+      }
+
+      stations = stations.filter(s => s.id !== editingStationId);
+      persistToLocalStorage();
+      closeEditStationModal();
+      renderMapFeatures();
+      showToast(`已刪除站點「${st.name}」`);
+    }
+
+    // Excel 批次匯入站點與範本下載
+    function openExcelStationModal() {
+      document.getElementById('modal-excel-stations').classList.remove('hidden');
+      lucide.createIcons();
+    }
+
+    function closeExcelStationModal() {
+      document.getElementById('modal-excel-stations').classList.add('hidden');
+    }
+
+    function downloadStationExcelTemplate() {
+      if (typeof XLSX === 'undefined') {
+        showToast('Excel 模組尚未載入完成，請稍候再試');
+        return;
+      }
+      const sampleRows = [
+        { '站點名稱': '土城機房', '設施類型': '機房', '緯度': 24.9855, '經度': 121.4452, '站內設備': 'OLT-TC-01, SW-TC-02' },
+        { '站點名稱': '中華路人孔 #01', '設施類型': '人孔', '緯度': 24.9888, '經度': 121.4498, '站內設備': 'ODF-MH01' },
+        { '站點名稱': '板橋光交箱 #02', '設施類型': '光交箱', '緯度': 24.9935, '經度': 121.4545, '站內設備': 'CAB-BQ-02' },
+        { '站點名稱': '金城路手孔 #01', '設施類型': '手孔', '緯度': 24.9840, '經度': 121.4535, '站內設備': '' }
+      ];
+      const ws = XLSX.utils.json_to_sheet(sampleRows);
+      ws['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 28 }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, '站點匯入清單');
+      XLSX.writeFile(wb, '光纜系統_站點匯入範本.xlsx');
+      showToast('已下載「光纜系統_站點匯入範本.xlsx」');
+    }
+
+    function normalizeStationTypeFromExcel(rawType) {
+      const val = String(rawType || '').trim().toLowerCase();
+      if (val.includes('機房') || val === 'co' || val.includes('office')) return 'co';
+      if (val.includes('手孔') || val === 'handhole') return 'handhole';
+      if (val.includes('光交') || val.includes('交接') || val === 'cabinet') return 'cabinet';
+      return 'manhole';
+    }
+
+    function handleStationExcelFile(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      if (typeof XLSX === 'undefined') {
+        showToast('Excel 解析元件未載入，請檢查網路連線');
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          const rows = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+
+          if (!rows || rows.length === 0) {
+            showToast('Excel 檔案內沒有讀取到任何資料列');
+            return;
+          }
+
+          const parsedStations = [];
+          rows.forEach((row, idx) => {
+            const name = String(row['站點名稱'] || row['名稱'] || row['name'] || row['Name'] || '').trim();
+            const lat = parseFloat(row['緯度'] || row['lat'] || row['Lat'] || row['latitude'] || row['Latitude']);
+            const lng = parseFloat(row['經度'] || row['lng'] || row['lon'] || row['Lng'] || row['Longitude']);
+            const typeRaw = row['設施類型'] || row['類型'] || row['type'] || row['Type'] || '人孔';
+            const devicesRaw = String(row['站內設備'] || row['設備'] || row['devices'] || '').trim();
+
+            if (!name || Number.isNaN(lat) || Number.isNaN(lng)) return;
+
+            const devices = devicesRaw
+              ? devicesRaw.split(/[,，、;；]/).map(s => s.trim()).filter(Boolean).map(dName => ({
+                  name: dName,
+                  model: '',
+                  note: ''
+                }))
+              : [];
+
+            parsedStations.push({
+              id: `ST-XL-${Date.now().toString().slice(-3)}-${idx + 1}`,
+              name,
+              type: normalizeStationTypeFromExcel(typeRaw),
+              lat,
+              lng,
+              devices
+            });
+          });
+
+          if (parsedStations.length === 0) {
+            showToast('匯入失敗：請確認 Excel 包含「站點名稱」、「緯度」、「經度」欄位且座標為數字');
+            return;
+          }
+
+          const importMode = document.querySelector('input[name="excel-import-mode"]:checked')?.value || 'merge';
+          if (importMode === 'replace') {
+            stations = parsedStations;
+          } else {
+            parsedStations.forEach(newSt => {
+              const existing = stations.find(s => s.name === newSt.name);
+              if (existing) {
+                existing.type = newSt.type;
+                existing.lat = newSt.lat;
+                existing.lng = newSt.lng;
+                if (newSt.devices.length > 0) existing.devices = newSt.devices;
+              } else {
+                stations.push(newSt);
+              }
+            });
+          }
+
+          persistToLocalStorage();
+          closeExcelStationModal();
+          renderMapFeatures();
+
+          const bounds = L.latLngBounds(parsedStations.map(s => [s.lat, s.lng]));
+          if (bounds.isValid()) {
+            map.fitBounds(bounds, { padding: [80, 80], maxZoom: 16 });
+          }
+          showToast(`成功從 Excel 匯入 ${parsedStations.length} 處站點資料！`);
+        } catch (err) {
+          console.error(err);
+          showToast('Excel 解析發生錯誤，請確認檔案未損毀或加密');
+        } finally {
+          event.target.value = '';
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    // =========================================================================
+    // 8. 右側光纜詳細面板、敷設方式即時修改與連續 1~N 芯管理
+    // =========================================================================
+    function openRightPanel(cableId) {
+      selectedCableId = cableId;
+      coreStatusFilter = 'ALL';
+      const jumpInput = document.getElementById('core-jump-input');
+      if (jumpInput) jumpInput.value = '';
+      renderMapFeatures();
+
+      const cable = cables.find(c => c.id === cableId);
+      if (!cable) return;
+
+      const meta = INSTALL_METHODS[cable.installType] || INSTALL_METHODS.conduit;
+      const lengthMeters = calculateRouteDistance(cable.coords);
+      const usedCount = cable.cores.filter(c => isCoreUsed(c)).length;
+
+      document.getElementById('detail-install-dot').style.backgroundColor = meta.color;
+      document.getElementById('detail-cable-name').textContent = cable.name;
+      document.getElementById('detail-cores-badge').textContent = `${cable.totalCores} 芯`;
+      document.getElementById('edit-cable-name').value = cable.name;
+      document.getElementById('detail-cable-length').textContent = `${lengthMeters.toLocaleString()} m`;
+      document.getElementById('edit-cable-install').value = cable.installType;
+      document.getElementById('edit-cable-cores').value = String(cable.totalCores);
+      document.getElementById('detail-stations-span').textContent = `${cable.startStation} ➔ ${cable.endStation}`;
+      document.getElementById('detail-usage-summary').textContent = `已使用 ${usedCount} / ${cable.totalCores} 芯`;
+
+      const panelIsoBtn = document.getElementById('btn-panel-isolate-toggle');
+      if (panelIsoBtn) {
+        const isIso = isolatedCableId === cable.id;
+        panelIsoBtn.textContent = isIso ? '顯示全部迴路' : '僅顯示此迴路';
+        panelIsoBtn.className = isIso
+          ? 'px-2.5 py-1 rounded-md text-[11px] font-bold bg-rose-600 hover:bg-rose-700 text-white transition'
+          : 'px-2.5 py-1 rounded-md text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition';
+      }
+
+      updateCoreFilterButtons();
+      renderCoreList(cable);
+
+      document.getElementById('right-detail-panel').classList.remove('hidden');
+    }
+
+    function closeRightPanel() {
+      selectedCableId = null;
+      if (isolatedCableId) {
+        isolatedCableId = null;
+        document.getElementById('chk-isolate-circuit').checked = false;
+        document.getElementById('btn-clear-circuit-isolate').classList.add('hidden');
+      }
+      document.getElementById('right-detail-panel').classList.add('hidden');
+      renderMapFeatures();
+    }
+
+    function updateCableMetadata() {
+      const cable = cables.find(c => c.id === selectedCableId);
+      if (!cable) return;
+
+      const newName = document.getElementById('edit-cable-name').value.trim();
+      const newInstall = document.getElementById('edit-cable-install').value;
+
+      if (newName) {
+        const wasIsolated = isolatedCableId === cable.id;
+        cable.name = newName;
+        cable.id = newName.split(' ')[0];
+        selectedCableId = cable.id;
+        if (wasIsolated) isolatedCableId = cable.id;
+      }
+      cable.installType = newInstall;
+
+      const meta = INSTALL_METHODS[newInstall];
+      document.getElementById('detail-install-dot').style.backgroundColor = meta.color;
+      document.getElementById('detail-cable-name').textContent = cable.name;
+
+      persistToLocalStorage();
+      renderMapFeatures();
+      showToast(`已更新迴路「${cable.name}」為「${meta.name}」敷設方式`);
+    }
+
+    function updateCableCoresCount() {
+      const cable = cables.find(c => c.id === selectedCableId);
+      if (!cable) return;
+
+      const newTotal = Number(document.getElementById('edit-cable-cores').value);
+      const oldCores = cable.cores;
+      const rebuiltCores = generateCores(newTotal);
+
+      for (let i = 0; i < Math.min(oldCores.length, rebuiltCores.length); i++) {
+        rebuiltCores[i].deviceA = oldCores[i].deviceA;
+        rebuiltCores[i].portA = oldCores[i].portA;
+        rebuiltCores[i].deviceZ = oldCores[i].deviceZ;
+        rebuiltCores[i].portZ = oldCores[i].portZ;
+      }
+
+      cable.totalCores = newTotal;
+      cable.cores = rebuiltCores;
+
+      persistToLocalStorage();
+      openRightPanel(cable.id);
+      showToast(`已調整光纜規格為 ${newTotal} 芯`);
+    }
+
+    function setCoreStatusFilter(statusFilter) {
+      coreStatusFilter = statusFilter;
+      updateCoreFilterButtons();
+      const cable = cables.find(c => c.id === selectedCableId);
+      if (cable) renderCoreList(cable);
+    }
+
+    function updateCoreFilterButtons() {
+      document.querySelectorAll('.core-status-filter-btn').forEach(btn => {
+        const isMatch = btn.dataset.statusFilter === coreStatusFilter;
+        btn.className = isMatch
+          ? 'core-status-filter-btn px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-800 text-white'
+          : 'core-status-filter-btn px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700';
+      });
+    }
+
+    function filterCoreListBySearch() {
+      const cable = cables.find(c => c.id === selectedCableId);
+      if (cable) renderCoreList(cable);
+    }
+
+    function renderCoreList(cable) {
+      const container = document.getElementById('core-list-container');
+      container.innerHTML = '';
+
+      const searchCoreVal = document.getElementById('core-jump-input')?.value.trim();
+
+      const filteredCores = cable.cores.filter(core => {
+        const used = isCoreUsed(core);
+        if (coreStatusFilter === 'used' && !used) return false;
+        if (coreStatusFilter === 'available' && used) return false;
+        if (searchCoreVal && !String(core.coreNumber).includes(searchCoreVal)) return false;
+        return true;
+      });
+
+      if (filteredCores.length === 0) {
+        container.innerHTML = `
+          <div class="text-center py-8 text-xs text-slate-400">
+            沒有符合篩選條件的芯線
+          </div>
+        `;
+        return;
+      }
+
+      filteredCores.forEach(core => {
+        const used = isCoreUsed(core);
+        const statusBadge = used
+          ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-700">已使用</span>'
+          : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">空閒</span>';
+
+        const endAStr = [core.deviceA, core.portA ? `P:${core.portA}` : ''].filter(Boolean).join(' ') || '未設甲端';
+        const endZStr = [core.deviceZ, core.portZ ? `P:${core.portZ}` : ''].filter(Boolean).join(' ') || '未設乙端';
+
+        const card = document.createElement('div');
+        card.className = `p-2.5 rounded-xl border transition cursor-pointer flex items-center justify-between gap-2 ${
+          used
+            ? 'bg-white border-indigo-200/90 hover:border-indigo-500 shadow-2xs'
+            : 'bg-white/80 border-slate-200 hover:border-indigo-400'
+        }`;
+        card.onclick = () => openCoreModal(core.coreNumber);
+
+        card.innerHTML = `
+          <div class="flex items-center gap-2.5 min-w-0 flex-1">
+            <div style="background-color:${core.colorHex}; color:${core.textColor}; border:1.5px solid ${core.borderColor};"
+                 class="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs shrink-0 shadow-2xs"
+                 title="${core.colorName}色識別">
+              ${core.coreNumber}
+            </div>
+            <div class="min-w-0 flex-1">
+              <div class="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <span>第 ${core.coreNumber} 芯</span>
+                <span class="text-[10px] font-normal text-slate-400">(${core.colorName})</span>
+              </div>
+              ${
+                used
+                  ? `<div class="mt-1 space-y-0.5 text-[11px]">
+                      <div class="flex items-center gap-1 truncate text-slate-700 font-semibold">
+                        <span class="px-1 py-0 bg-indigo-100 text-indigo-800 rounded text-[10px] font-bold shrink-0">甲</span>
+                        <span class="truncate">${endAStr}</span>
+                      </div>
+                      <div class="flex items-center gap-1 truncate text-slate-700 font-semibold">
+                        <span class="px-1 py-0 bg-emerald-100 text-emerald-800 rounded text-[10px] font-bold shrink-0">乙</span>
+                        <span class="truncate">${endZStr}</span>
+                      </div>
+                    </div>`
+                  : `<div class="text-[11px] text-slate-400 mt-0.5">未指派甲乙兩端 (空閒)</div>`
+              }
+            </div>
+          </div>
+          <div class="shrink-0 flex items-center gap-1">
+            ${statusBadge}
+            <i data-lucide="chevron-right" class="w-4 h-4 text-slate-400"></i>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+
+      lucide.createIcons();
+    }
+
+    function fillQuickPort(endSide, portStr) {
+      document.getElementById(`core-port-${endSide}-input`).value = portStr;
+    }
+
+    function openCoreModal(coreNumber) {
+      const cable = cables.find(c => c.id === selectedCableId);
+      if (!cable) return;
+      const core = cable.cores.find(c => c.coreNumber === coreNumber);
+      if (!core) return;
+
+      editingCoreNumber = coreNumber;
+      document.getElementById('edit-core-title').textContent =
+        `編輯 ${cable.name} - 第 ${core.coreNumber} 芯（甲乙兩端）`;
+      document.getElementById('core-modal-station-a').textContent = cable.startStation || '甲端站點';
+      document.getElementById('core-modal-station-z').textContent = cable.endStation || '乙端站點';
+
+      document.getElementById('core-device-a-input').value = core.deviceA || '';
+      document.getElementById('core-port-a-input').value = core.portA || '';
+      document.getElementById('core-device-z-input').value = core.deviceZ || '';
+      document.getElementById('core-port-z-input').value = core.portZ || '';
+
+      document.getElementById('modal-edit-core').classList.remove('hidden');
+      lucide.createIcons();
+    }
+
+    function closeCoreModal() {
+      document.getElementById('modal-edit-core').classList.add('hidden');
+      editingCoreNumber = null;
+    }
+
+    function saveCoreEdit() {
+      const cable = cables.find(c => c.id === selectedCableId);
+      if (!cable || !editingCoreNumber) return;
+
+      const core = cable.cores.find(c => c.coreNumber === editingCoreNumber);
+      core.deviceA = document.getElementById('core-device-a-input').value.trim();
+      core.portA = document.getElementById('core-port-a-input').value.trim();
+      core.deviceZ = document.getElementById('core-device-z-input').value.trim();
+      core.portZ = document.getElementById('core-port-z-input').value.trim();
+
+      persistToLocalStorage();
+      closeCoreModal();
+      openRightPanel(cable.id);
+      showToast(
+        isCoreUsed(core)
+          ? `已儲存第 ${core.coreNumber} 芯甲乙兩端連結`
+          : `第 ${core.coreNumber} 芯目前為空閒狀態`
+      );
+    }
+
+    function releaseCoreEdit() {
+      const cable = cables.find(c => c.id === selectedCableId);
+      if (!cable || !editingCoreNumber) return;
+
+      const core = cable.cores.find(c => c.coreNumber === editingCoreNumber);
+      core.deviceA = '';
+      core.portA = '';
+      core.deviceZ = '';
+      core.portZ = '';
+
+      persistToLocalStorage();
+      closeCoreModal();
+      openRightPanel(cable.id);
+      showToast(`已釋放第 ${core.coreNumber} 芯為空閒狀態`);
+    }
+
+    function deleteSelectedCable() {
+      if (!selectedCableId) return;
+      cables = cables.filter(c => c.id !== selectedCableId);
+      persistToLocalStorage();
+      closeRightPanel();
+      renderMapFeatures();
+      showToast('已刪除該光纜路由');
+    }
+
+    // =========================================================================
+    // 9. 篩選器、底圖切換與 GeoJSON 匯入 / 匯出
+    // =========================================================================
+    function toggleInstallFilter(type) {
+      if (visibleInstallTypes.has(type)) {
+        visibleInstallTypes.delete(type);
+      } else {
+        visibleInstallTypes.add(type);
+      }
+      renderMapFeatures();
+    }
+
+    function toggleCoreFilter(coreVal) {
+      coreFilter = coreVal;
+      document.querySelectorAll('.core-filter-btn').forEach(btn => {
+        const isMatch = String(btn.dataset.coreFilter) === String(coreVal);
+        btn.className = isMatch
+          ? 'core-filter-btn px-2.5 py-1 rounded-md text-xs font-bold bg-slate-800 text-white'
+          : 'core-filter-btn px-2.5 py-1 rounded-md text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700';
+      });
+      renderMapFeatures();
+    }
+
+    function resetFilters() {
+      visibleInstallTypes = new Set(['side_ditch', 'sewer', 'aerial', 'conduit']);
+      toggleCoreFilter('ALL');
+    }
+
+    function toggleLabels() {
+      showLabels = !showLabels;
+      const btn = document.getElementById('btn-toggle-labels');
+      btn.querySelector('span').textContent = showLabels ? '標籤: 開' : '標籤: 關';
+      btn.classList.toggle('text-emerald-300', showLabels);
+      btn.classList.toggle('text-slate-400', !showLabels);
+      renderMapFeatures();
+    }
+
+    function toggleBasemap() {
+      map.removeLayer(baseLayers[currentBasemap]);
+      if (currentBasemap === 'google_roadmap') {
+        currentBasemap = 'google_hybrid';
+        document.getElementById('basemap-label').textContent = 'Google 衛星';
+      } else if (currentBasemap === 'google_hybrid') {
+        currentBasemap = 'light';
+        document.getElementById('basemap-label').textContent = 'OSM 街道';
+      } else if (currentBasemap === 'light') {
+        currentBasemap = 'dark';
+        document.getElementById('basemap-label').textContent = '深色底圖';
+      } else {
+        currentBasemap = 'google_roadmap';
+        document.getElementById('basemap-label').textContent = 'Google 街道';
+      }
+      baseLayers[currentBasemap].addTo(map);
+    }
+
+    function toggleLeftPanel() {
+      const body = document.getElementById('left-panel-body');
+      const icon = document.getElementById('left-panel-chevron');
+      const isHidden = body.classList.toggle('hidden');
+      icon.setAttribute('data-lucide', isHidden ? 'chevron-up' : 'chevron-down');
+      lucide.createIcons();
+    }
+
+    function locateCurrentUser() {
+      if (!navigator.geolocation) {
+        showToast('此瀏覽器或裝置不支援 GPS 定位');
+        return;
+      }
+      showToast('正在定位您目前所在位置...');
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const { latitude, longitude } = pos.coords;
+          if (userLocationMarker) map.removeLayer(userLocationMarker);
+          userLocationMarker = L.circleMarker([latitude, longitude], {
+            radius: 9,
+            color: '#ffffff',
+            weight: 3,
+            fillColor: '#0284c7',
+            fillOpacity: 1
+          }).addTo(map).bindPopup('您的目前位置').openPopup();
+          map.setView([latitude, longitude], 16);
+          showToast('已定位至您目前所在位置');
+        },
+        () => {
+          showToast('無法取得定位權限，請確認手機/瀏覽器已開啟位置存取');
+        },
+        { enableHighAccuracy: true, timeout: 8000 }
+      );
+    }
+
+    function buildExportPayload() {
+      return {
+        type: 'FeatureCollection',
+        exportedAt: new Date().toISOString(),
+        metadata: {
+          system: '光纜路由繪製與管線敷設管理 GIS 系統',
+          stationCount: stations.length,
+          cableCount: cables.length
+        },
+        stations,
+        features: cables.map(c => {
+          const meta = INSTALL_METHODS[c.installType] || INSTALL_METHODS.conduit;
+          return {
+            type: 'Feature',
+            properties: {
+              id: c.id,
+              name: c.name,
+              installType: c.installType,
+              installName: meta.name,
+              colorHex: meta.color,
+              totalCores: c.totalCores,
+              lengthMeters: calculateRouteDistance(c.coords),
+              startStation: c.startStation,
+              endStation: c.endStation,
+              cores: c.cores
+            },
+            geometry: {
+              type: 'LineString',
+              coordinates: c.coords.map(pt => [pt[1], pt[0]])
+            }
+          };
+        })
+      };
+    }
+
+    function applyImportedData(rawData) {
+      if (!rawData) throw new Error('無效的檔案格式');
+
+      if (Array.isArray(rawData.stations)) {
+        stations = rawData.stations.map(st => ({
+          ...st,
+          devices: Array.isArray(st.devices) ? st.devices : []
+        }));
+      }
+
+      if (Array.isArray(rawData.cables)) {
+        cables = rawData.cables;
+      } else if (Array.isArray(rawData.features)) {
+        const importedCables = [];
+        rawData.features.forEach((f, idx) => {
+          if (!f.geometry || f.geometry.type !== 'LineString') return;
+          const props = f.properties || {};
+          const totalCores = Number(props.totalCores) || 48;
+          const coords = f.geometry.coordinates.map(c => [c[1], c[0]]);
+          importedCables.push({
+            id: props.id || `CB-${String(idx + 1).padStart(2, '0')}`,
+            name: props.name || props.id || `匯入迴路 #${idx + 1}`,
+            installType: INSTALL_METHODS[props.installType] ? props.installType : 'conduit',
+            totalCores,
+            startStation: props.startStation || '起點站',
+            endStation: props.endStation || '終點站',
+            coords,
+            cores: Array.isArray(props.cores) ? props.cores : generateCores(totalCores)
+          });
+        });
+        if (importedCables.length > 0) cables = importedCables;
+      }
+
+      selectedCableId = null;
+      isolatedCableId = null;
+      document.getElementById('right-detail-panel').classList.add('hidden');
+      renderMapFeatures();
+    }
+
+    function triggerImportGeoJSON() {
+      document.getElementById('geojson-file-input').click();
+    }
+
+    function handleImportGeoJSON(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const parsed = JSON.parse(e.target.result);
+          applyImportedData(parsed);
+          persistToLocalStorage();
+          showToast(`成功匯入圖資（共 ${cables.length} 條光纜迴路、${stations.length} 處站點）`);
+        } catch (err) {
+          showToast('匯入失敗：請確認檔案為正確的 GeoJSON / JSON 格式');
+        } finally {
+          event.target.value = '';
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    function exportGeoJSON() {
+      const geojson = buildExportPayload();
+      const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `fiber_routes_${new Date().toISOString().slice(0, 10)}.geojson`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('已匯出包含管線敷設方式與甲乙兩端芯數的 GeoJSON 檔案');
+    }
+
+    // =========================================================================
+    // 9.5 個人 Google 雲端硬碟 (Google Drive API) 同步整合
+    // =========================================================================
+    function openGDriveModal() {
+      const savedClientId = localStorage.getItem(GDRIVE_CLIENT_ID_KEY) || '';
+      document.getElementById('gdrive-client-id-input').value = savedClientId;
+      document.getElementById('modal-gdrive').classList.remove('hidden');
+      lucide.createIcons();
+    }
+
+    function closeGDriveModal() {
+      document.getElementById('modal-gdrive').classList.add('hidden');
+    }
+
+    function saveGDriveClientId() {
+      const val = document.getElementById('gdrive-client-id-input').value.trim();
+      localStorage.setItem(GDRIVE_CLIENT_ID_KEY, val);
+    }
+
+    function updateGDriveStatusUI(statusText, isConnected = true) {
+      const dot = document.getElementById('gdrive-status-dot');
+      const text = document.getElementById('gdrive-status-text');
+      const btnText = document.getElementById('gdrive-btn-text');
+      const lastSync = document.getElementById('gdrive-last-sync');
+      if (isConnected) {
+        dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-500';
+        text.textContent = '已連線個人 Google 雲端硬碟';
+        btnText.textContent = '雲端已連線';
+        lastSync.textContent = statusText;
+      }
+    }
+
+    function connectGoogleDrive(onConnectedCallback = null) {
+      const clientId = document.getElementById('gdrive-client-id-input').value.trim();
+      if (!clientId) {
+        showToast('請先輸入您的 Google OAuth Client ID');
+        return;
+      }
+      saveGDriveClientId();
+
+      if (window.location.protocol === 'file:') {
+        showToast('Google 登入需透過 https:// 或 http://localhost 網址開啟，無法在 file:// 本機路徑登入');
+        return;
+      }
+
+      if (!window.google || !google.accounts || !google.accounts.oauth2) {
+        showToast('Google 驗證模組尚未載入完成，請確認網路連線後重試');
+        return;
+      }
+
+      gdriveTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly',
+        callback: (tokenResponse) => {
+          if (tokenResponse && tokenResponse.access_token) {
+            gdriveAccessToken = tokenResponse.access_token;
+            updateGDriveStatusUI('授權成功');
+            showToast('已成功登入並授權個人 Google 雲端硬碟！');
+            if (typeof onConnectedCallback === 'function') {
+              onConnectedCallback();
+            }
+          }
+        }
+      });
+
+      gdriveTokenClient.requestAccessToken({ prompt: 'consent' });
+    }
+
+    async function findCloudDbFileId() {
+      const q = encodeURIComponent(`name='${GDRIVE_DB_FILENAME}' and trashed=false`);
+      const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)`, {
+        headers: { Authorization: `Bearer ${gdriveAccessToken}` }
+      });
+      if (!res.ok) throw new Error('查詢雲端檔案失敗');
+      const data = await res.json();
+      return data.files && data.files.length > 0 ? data.files[0].id : null;
+    }
+
+    async function saveToGoogleDrive() {
+      if (!gdriveAccessToken) {
+        connectGoogleDrive(() => saveToGoogleDrive());
+        return;
+      }
+
+      try {
+        showToast('正在同步儲存至您的 Google 雲端硬碟...');
+        const payloadStr = JSON.stringify(buildExportPayload(), null, 2);
+        const existingFileId = await findCloudDbFileId();
+
+        const metadata = {
+          name: GDRIVE_DB_FILENAME,
+          mimeType: 'application/json'
+        };
+
+        const boundary = '-------314159265358979323846';
+        const delimiter = `\r\n--${boundary}\r\n`;
+        const closeDelim = `\r\n--${boundary}--`;
+
+        const multipartBody =
+          delimiter +
+          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+          JSON.stringify(metadata) +
+          delimiter +
+          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+          payloadStr +
+          closeDelim;
+
+        const uploadUrl = existingFileId
+          ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=multipart`
+          : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+
+        const uploadRes = await fetch(uploadUrl, {
+          method: existingFileId ? 'PATCH' : 'POST',
+          headers: {
+            Authorization: `Bearer ${gdriveAccessToken}`,
+            'Content-Type': `multipart/related; boundary="${boundary}"`
+          },
+          body: multipartBody
+        });
+
+        if (!uploadRes.ok) throw new Error('上傳失敗');
+        const nowStr = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+        updateGDriveStatusUI(`已同步 (${nowStr})`);
+        showToast(`已成功存檔至 Google 雲端硬碟（${GDRIVE_DB_FILENAME}）！`);
+      } catch (err) {
+        gdriveAccessToken = null;
+        showToast('雲端存檔失敗或登入已過期，請重新點選「登入授權 Google」');
+      }
+    }
+
+    // Excel 批次匯入站點（支援地址自動地理編碼 & Google 雲端硬碟讀取）
+    function openExcelStationModal() {
+      document.getElementById('excel-geocode-progress').classList.add('hidden');
+      document.getElementById('modal-excel-stations').classList.remove('hidden');
+      lucide.createIcons();
+    }
+
+    function closeExcelStationModal() {
+      document.getElementById('modal-excel-stations').classList.add('hidden');
+    }
+
+    function downloadStationExcelTemplate() {
+      if (typeof XLSX === 'undefined') {
+        showToast('Excel 模組尚未載入完成，請稍候再試');
+        return;
+      }
+      const sampleRows = [
+        {
+          '站點名稱': '土城中央機房',
+          '站點分類': '機房',
+          '站點地址': '新北市土城區中央路二段100號',
+          '緯度': '',
+          '經度': '',
+          '站內設備': 'OLT-TC-01, SW-TC-02'
+        },
+        {
+          '站點名稱': '海山5G基站 #01',
+          '站點分類': '基站',
+          '站點地址': '新北市土城區海山路50號',
+          '緯度': '',
+          '經度': '',
+          '站內設備': 'BBU-HS-01, ODF-01'
+        },
+        {
+          '站點名稱': '板橋遠東企業客戶',
+          '站點分類': '客戶',
+          '站點地址': '新北市板橋區遠東路1號',
+          '緯度': '',
+          '經度': '',
+          '站內設備': 'CPE-FE-01'
+        },
+        {
+          '站點名稱': '中和科技園區客戶 #02',
+          '站點分類': '客戶',
+          '站點地址': '新北市中和區建一路150號',
+          '緯度': '',
+          '經度': '',
+          '站內設備': 'SW-ZH-02'
+        }
+      ];
+      const ws = XLSX.utils.json_to_sheet(sampleRows);
+      ws['!cols'] = [{ wch: 22 }, { wch: 12 }, { wch: 32 }, { wch: 12 }, { wch: 12 }, { wch: 26 }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, '站點地址匯入清單');
+      XLSX.writeFile(wb, '光纜系統_站點地址匯入範本.xlsx');
+      showToast('已下載「光纜系統_站點地址匯入範本.xlsx」');
+    }
+
+    function normalizeStationTypeFromExcel(rawType) {
+      const val = String(rawType || '').trim().toLowerCase();
+      if (val.includes('機房') || val === 'co' || val.includes('office')) return 'co';
+      if (val.includes('客戶') || val.includes('用戶') || val === 'customer' || val === 'client') return 'customer';
+      if (val.includes('基站') || val.includes('基地台') || val === 'base' || val === 'base_station') return 'base_station';
+      return 'base_station';
+    }
+
+    // 將台灣地址轉換為 WGS84 經緯度座標 (Nominatim OpenStreetMap Geocoder)
+    async function geocodeTaiwanAddress(addressStr) {
+      const cleaned = String(addressStr || '').trim();
+      if (!cleaned) return null;
+      const queryAddr = cleaned.includes('台灣') || cleaned.includes('臺灣') ? cleaned : `台灣 ${cleaned}`;
+      try {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=tw&q=${encodeURIComponent(queryAddr)}`;
+        const res = await fetch(url, {
+          headers: { 'Accept-Language': 'zh-TW,zh;q=0.9' }
+        });
+        if (!res.ok) return null;
+        const list = await res.json();
+        if (Array.isArray(list) && list.length > 0) {
+          return {
+            lat: parseFloat(list[0].lat),
+            lng: parseFloat(list[0].lon)
+          };
+        }
+      } catch (err) {
+        console.warn('地址地理編碼失敗:', cleaned, err);
+      }
+      return null;
+    }
+
+    async function processExcelWorkbookBuffer(arrayBuffer, sourceLabel = 'Excel') {
+      if (typeof XLSX === 'undefined') {
+        showToast('Excel 解析元件未載入，請檢查網路連線');
+        return;
+      }
+
+      try {
+        const data = new Uint8Array(arrayBuffer);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        const rows = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+
+        if (!rows || rows.length === 0) {
+          showToast('Excel 檔案內沒有讀取到任何資料列');
+          return;
+        }
+
+        const progressWrap = document.getElementById('excel-geocode-progress');
+        const statusText = document.getElementById('excel-geocode-status-text');
+        const counterText = document.getElementById('excel-geocode-counter');
+        const progressBar = document.getElementById('excel-geocode-bar');
+
+        progressWrap.classList.remove('hidden');
+        statusText.textContent = `正在解析「${sourceLabel}」站點地址與座標...`;
+        counterText.textContent = `0 / ${rows.length}`;
+        progressBar.style.width = '5%';
+
+        const parsedStations = [];
+        const failedAddresses = [];
+
+        for (let idx = 0; idx < rows.length; idx++) {
+          const row = rows[idx];
+          const name = String(row['站點名稱'] || row['名稱'] || row['name'] || row['Name'] || '').trim();
+          const typeRaw = row['站點分類'] || row['設施類型'] || row['分類'] || row['類型'] || row['type'] || '基站';
+          const address = String(row['站點地址'] || row['地址'] || row['address'] || row['Address'] || '').trim();
+          let lat = parseFloat(row['緯度'] || row['lat'] || row['Lat'] || row['latitude']);
+          let lng = parseFloat(row['經度'] || row['lng'] || row['lon'] || row['Lng'] || row['Longitude']);
+          const devicesRaw = String(row['站內設備'] || row['設備'] || row['devices'] || '').trim();
+
+          counterText.textContent = `${idx + 1} / ${rows.length}`;
+          progressBar.style.width = `${Math.round(((idx + 1) / rows.length) * 100)}%`;
+
+          if (!name && !address) continue;
+          const finalName = name || address;
+
+          // 若無直接填寫經緯度，則透過站點地址自動地理編碼轉換座標
+          if ((Number.isNaN(lat) || Number.isNaN(lng)) && address) {
+            statusText.textContent = `正在定位地址：${address}`;
+            const geo = await geocodeTaiwanAddress(address);
+            if (geo) {
+              lat = geo.lat;
+              lng = geo.lng;
+            } else {
+              failedAddresses.push(`${finalName} (${address})`);
+            }
+            // 遵守公開地理編碼服務請求間隔
+            if (idx < rows.length - 1) {
+              await new Promise(r => setTimeout(r, 450));
+            }
+          }
+
+          if (Number.isNaN(lat) || Number.isNaN(lng)) continue;
+
+          const devices = devicesRaw
+            ? devicesRaw.split(/[,，、;；]/).map(s => s.trim()).filter(Boolean).map(dName => ({
+                name: dName,
+                model: '',
+                note: ''
+              }))
+            : [];
+
+          parsedStations.push({
+            id: `ST-XL-${Date.now().toString().slice(-3)}-${idx + 1}`,
+            name: finalName,
+            type: normalizeStationTypeFromExcel(typeRaw),
+            address,
+            lat,
+            lng,
+            devices
+          });
+        }
+
+        progressWrap.classList.add('hidden');
+
+        if (parsedStations.length === 0) {
+          showToast('未能定位任何站點，請確認 Excel 中的「站點地址」完整（含縣市路名）或填寫經緯度');
+          return;
+        }
+
+        const importMode = document.querySelector('input[name="excel-import-mode"]:checked')?.value || 'merge';
+        if (importMode === 'replace') {
+          stations = parsedStations;
+        } else {
+          parsedStations.forEach(newSt => {
+            const existing = stations.find(s => s.name === newSt.name);
+            if (existing) {
+              existing.type = newSt.type;
+              existing.address = newSt.address || existing.address;
+              existing.lat = newSt.lat;
+              existing.lng = newSt.lng;
+              if (newSt.devices.length > 0) existing.devices = newSt.devices;
+            } else {
+              stations.push(newSt);
+            }
+          });
+        }
+
+        persistToLocalStorage();
+        closeExcelStationModal();
+        renderMapFeatures();
+
+        const bounds = L.latLngBounds(parsedStations.map(s => [s.lat, s.lng]));
+        if (bounds.isValid()) {
+          map.fitBounds(bounds, { padding: [80, 80], maxZoom: 16 });
+        }
+
+        const failHint = failedAddresses.length > 0 ? `（另有 ${failedAddresses.length} 筆地址無法辨識）` : '';
+        showToast(`成功匯入並建立 ${parsedStations.length} 處站點！${failHint}`);
+      } catch (err) {
+        console.error(err);
+        document.getElementById('excel-geocode-progress').classList.add('hidden');
+        showToast('Excel 解析發生錯誤，請確認檔案格式正確');
+      }
+    }
+
+    function handleStationExcelFile(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        await processExcelWorkbookBuffer(e.target.result, file.name);
+        event.target.value = '';
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    // 從個人 Google 雲端硬碟列出並直接匯入 Excel / Google 試算表
+    async function listGoogleDriveExcelFiles() {
+      const listContainer = document.getElementById('gdrive-excel-file-list');
+      if (!gdriveAccessToken) {
+        const savedClientId = localStorage.getItem(GDRIVE_CLIENT_ID_KEY) || '';
+        if (!savedClientId) {
+          closeExcelStationModal();
+          openGDriveModal();
+          showToast('請先在 Google 雲端視窗設定並登入您的 Client ID');
+          return;
+        }
+        document.getElementById('gdrive-client-id-input').value = savedClientId;
+        connectGoogleDrive(() => listGoogleDriveExcelFiles());
+        return;
+      }
+
+      listContainer.innerHTML = `<div class="text-[11px] text-sky-700 font-bold py-2">正在搜尋您 Google 雲端硬碟中的 Excel 與試算表檔案...</div>`;
+
+      try {
+        const q = encodeURIComponent(
+          "trashed=false and (mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType='application/vnd.ms-excel' or mimeType='application/vnd.google-apps.spreadsheet' or mimeType='text/csv')"
+        );
+        const res = await fetch(
+          `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime desc&pageSize=15&fields=files(id,name,mimeType,modifiedTime)`,
+          { headers: { Authorization: `Bearer ${gdriveAccessToken}` } }
+        );
+        if (!res.ok) throw new Error('讀取雲端檔案列表失敗');
+        const data = await res.json();
+        const files = data.files || [];
+
+        if (files.length === 0) {
+          listContainer.innerHTML = `<div class="text-[11px] text-slate-500 py-2">您的 Google 雲端硬碟中尚未找到 .xlsx / .csv 或 Google 試算表檔案。</div>`;
+          return;
+        }
+
+        listContainer.innerHTML = '';
+        files.forEach(file => {
+          const isGoogleSheet = file.mimeType === 'application/vnd.google-apps.spreadsheet';
+          const item = document.createElement('div');
+          item.className = 'flex items-center justify-between bg-white px-3 py-2 rounded-xl border border-sky-200 gap-2';
+          item.innerHTML = `
+            <div class="min-w-0 flex-1">
+              <div class="font-bold text-slate-800 truncate">${escapeHtml(file.name)}</div>
+              <div class="text-[10px] text-slate-400">${isGoogleSheet ? 'Google 試算表' : 'Excel / CSV 檔案'}</div>
+            </div>
+            <button type="button" onclick="importExcelFromGoogleDrive('${file.id}', '${escapeHtml(file.name)}', '${file.mimeType}')" class="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold shrink-0">
+              匯入站點
+            </button>
+          `;
+          listContainer.appendChild(item);
+        });
+      } catch (err) {
+        console.error(err);
+        gdriveAccessToken = null;
+        listContainer.innerHTML = `<div class="text-[11px] text-rose-600 font-bold py-2">讀取失敗或授權已過期，請重新點選「讀取雲端 Excel 清單」授權。</div>`;
+      }
+    }
+
+    async function importExcelFromGoogleDrive(fileId, fileName, mimeType) {
+      if (!gdriveAccessToken) return;
+      showToast(`正在從 Google 雲端下載「${fileName}」...`);
+      try {
+        const isGoogleSheet = mimeType === 'application/vnd.google-apps.spreadsheet';
+        const downloadUrl = isGoogleSheet
+          ? `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+          : `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+
+        const res = await fetch(downloadUrl, {
+          headers: { Authorization: `Bearer ${gdriveAccessToken}` }
+        });
+        if (!res.ok) throw new Error('下載雲端 Excel 失敗');
+        const arrayBuffer = await res.arrayBuffer();
+        await processExcelWorkbookBuffer(arrayBuffer, fileName);
+      } catch (err) {
+        console.error(err);
+        showToast(`無法讀取雲端檔案「${fileName}」，請確認檔案權限`);
+      }
+    }
+
+    async function loadFromGoogleDrive() {
+      if (!gdriveAccessToken) {
+        connectGoogleDrive(() => loadFromGoogleDrive());
+        return;
+      }
+
+      try {
+        showToast('正在從您的 Google 雲端硬碟讀取光纜圖資...');
+        const fileId = await findCloudDbFileId();
+        if (!fileId) {
+          showToast(`您的雲端硬碟尚無「${GDRIVE_DB_FILENAME}」，請先執行一次「一鍵雲端存檔」`);
+          return;
+        }
+
+        const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+          headers: { Authorization: `Bearer ${gdriveAccessToken}` }
+        });
+        if (!res.ok) throw new Error('讀取內容失敗');
+        const cloudData = await res.json();
+        applyImportedData(cloudData);
+        persistToLocalStorage();
+        const nowStr = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+        updateGDriveStatusUI(`已載入 (${nowStr})`);
+        closeGDriveModal();
+        showToast('已成功從您的 Google 雲端硬碟載入最新光纜路由與芯數資料！');
+      } catch (err) {
+        showToast('從雲端讀取失敗，請確認授權狀態後重試');
+      }
+    }
+
+    function resetToDefaultDemoData() {
+      localStorage.removeItem(LOCAL_STORAGE_KEY);
+      location.reload();
+    }
+
+    function showToast(msg) {
+      const box = document.getElementById('toast-box');
+      document.getElementById('toast-message').textContent = msg;
+      box.classList.remove('hidden');
+      clearTimeout(window._toastTimer);
+      window._toastTimer = setTimeout(() => {
+        box.classList.add('hidden');
+      }, 3000);
+    }
+
+    // =========================================================================
+    // 10. 啟動系統
+    // =========================================================================
+    window.addEventListener('DOMContentLoaded', () => {
+      restoreFromLocalStorage();
+      lucide.createIcons();
+      renderMapFeatures();
+      setTimeout(refreshMapSize, 100);
+      setTimeout(refreshMapSize, 600);
+    });
+  </script>
+</body>
+</html>
